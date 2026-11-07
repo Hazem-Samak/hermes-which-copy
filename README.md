@@ -48,8 +48,9 @@ In your login shell (zsh): python3 → /opt/homebrew/bin/python3 (3.15.2).
 
 Six copies of Python. Three different answers depending on who you ask
 (`which python3` in your shell, the Python your editor launches, the Python
-Hermes spawns), and the *oldest of the six* would win in a normal terminal.
-That is the class of problem this plugin exists to make visible.
+Hermes spawns) — and the one Hermes uses is neither the newest (Homebrew's
+3.15.2, which your terminal runs) nor the oldest (the system's 3.9.6, which a
+bare PATH gets). That is the class of problem this plugin exists to make visible.
 
 And the sweep, on the same machine, in about one second:
 
@@ -151,7 +152,8 @@ Copies found (3):
 Separately: this is not the PATH Hermes runs with. For python3, Hermes itself would run $HERMES_HOME/tools/python-3.14.9+20261021-darwin-arm64/bin/python3 (3.14.9).
 ```
 
-3. *"And check the whole environment."* → the sweep, one trap and the rest clean.
+3. *"And check the whole environment."* → the sweep: one trap, a handful of
+   warnings, everything else fine.
 
 The last line is the part people do not expect: Hermes does not use your shell's
 PATH at all. It builds its own at startup from your login shell plus the
@@ -191,7 +193,7 @@ Copy resolves both:
 **Copy inspection is done with `lstat` + `stat`,** so a broken symlink is
 reported as broken rather than skipped, a directory named like the tool is
 reported as a directory, and a file without execute permission is reported as
-one. Six bytes of the target decide `script` / `arm64` / `x86_64` /
+one. The first bytes of the target decide `script` / `arm64` / `x86_64` /
 `universal` / `elf`, because an Intel-only tool on Apple silicon is its own trap.
 
 **Provenance is path evidence, not a guess.** Each copy is classified from what
@@ -248,10 +250,10 @@ guessed from its filename.
   your secrets, but they do execute the discovered file. If you would rather
   execute nothing, pass `probe_versions: false`; the report then says versions
   were not checked instead of guessing.
-- **`PATH` has no precedence between a symlink and its target.** Which Copy
-  reports both — the name and what it resolves to — because "it is a Homebrew
-  formula" and "the name lives in `/opt/homebrew/bin`" are both true and people
-  ask about each.
+- **A name and its target are two facts, not one.** "The name lives in
+  `/opt/homebrew/bin`" and "the file is a Homebrew formula in `Cellar`" are both
+  true and people ask about each, so Which Copy reports the name, the resolution,
+  and the evidence rather than collapsing them.
 - **Version ordering is textual and conservative.** `3.9.2` < `3.13.1` is
   arithmetic on version components, not a claim about which release is better.
 
