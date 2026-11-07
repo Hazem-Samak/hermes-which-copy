@@ -202,8 +202,13 @@ def analyze(
                 Verdict(
                     "installed_not_on_path",
                     "note",
-                    "%d copy of %s exist outside PATH, so Hermes cannot run any of them by name."
-                    % (len(off_path), tool),
+                    "%d cop%s of %s exist%s outside PATH, so Hermes cannot run any of them by name."
+                    % (
+                        len(off_path),
+                        "y" if len(off_path) == 1 else "ies",
+                        tool,
+                        "" if len(off_path) == 1 else "s",
+                    ),
                     tuple(
                         "%s — %s" % (pathmodel.tidy(f.candidate.entry_path), _version_or_unknown(f))
                         for f in off_path
@@ -253,8 +258,13 @@ def analyze(
             Verdict(
                 "skipped_dead_entries",
                 "warning",
-                "Earlier in PATH, %s is not a usable program, so the shell silently skips it."
-                % ("one entry for " + tool if len(before) == 1 else "%d entries for %s" % (len(before), tool)),
+                (
+                    "Earlier in PATH, one entry for %s is not a usable program, so the shell "
+                    "silently skips it." % tool
+                    if len(before) == 1
+                    else "Earlier in PATH, %d entries for %s are not usable programs, so the "
+                    "shell silently skips them." % (len(before), tool)
+                ),
                 tuple(
                     "%s → %s" % (pathmodel.tidy(f.candidate.entry_path), f.candidate.kind_label)
                     for f in before
@@ -892,14 +902,7 @@ def scan_summary(reports: Sequence[dict], source: PathSource, login_shell: PathS
         lines.append("Not installed: %s%s" % (shown, more))
 
     if login_shell is not None and login_shell.available:
-        disagree = [
-            report["tool"]
-            for report in reports
-            if report.get("terminal")
-            and report["terminal"].get("winner")
-            and report.get("winner")
-            and report["terminal"]["winner"].get("path_raw") != report["winner"].get("path_raw")
-        ]
+        disagree = [report["tool"] for report in reports if _terminal_disagrees(report)]
         if disagree:
             lines.append("")
             lines.append(
@@ -913,6 +916,28 @@ def scan_summary(reports: Sequence[dict], source: PathSource, login_shell: PathS
     lines.append("")
     lines.append(SCAN_SCOPE)
     return "\n".join(lines).strip() + "\n"
+
+
+def _terminal_disagrees(report: dict) -> bool:
+    """Does a normal terminal resolve this name to a *different file*?
+
+    Two names for the same file are not a disagreement, so the answer comes from
+    the report's canonical comparison when it is present, and falls back to the
+    raw paths only when it is not.
+    """
+    terminal = report.get("terminal") or {}
+    if not isinstance(terminal, dict):
+        return False
+    agrees = terminal.get("agrees_with_hermes")
+    if agrees is not None:
+        return agrees is False
+    shell_winner = terminal.get("winner") or {}
+    hermes_winner = report.get("winner") or {}
+    return bool(
+        shell_winner.get("path_raw")
+        and hermes_winner.get("path_raw")
+        and shell_winner["path_raw"] != hermes_winner["path_raw"]
+    )
 
 
 def _scan_note(report: dict) -> str:

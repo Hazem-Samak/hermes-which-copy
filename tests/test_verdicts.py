@@ -470,6 +470,38 @@ def test_scan_summary_notes_terminal_disagreement(build, verdicts, pathmodel, to
     assert "Your terminal resolves these differently: python3" in text
 
 
+def test_scan_does_not_call_two_names_for_one_file_a_disagreement(
+    build, verdicts, pathmodel, tools, tmp_path
+):
+    """Aliases of one file are agreement, not a terminal-vs-Hermes difference."""
+    real = write_exe(tmp_path / "real" / "python3", version="3.13.1")
+    hermes_name = tmp_path / "hermes-bin" / "python3"
+    shell_name = tmp_path / "shell-bin" / "python3"
+    hermes_name.parent.mkdir(parents=True)
+    shell_name.parent.mkdir(parents=True)
+    hermes_name.symlink_to(real)
+    shell_name.symlink_to(real)
+    shell = pathmodel.PathSource(
+        kind=pathmodel.LOGIN_SHELL_SOURCE,
+        label="your login shell (zsh)",
+        entries=(str(shell_name.parent),),
+        raw=str(shell_name.parent),
+    )
+    report = verdicts.analyze(
+        "python3",
+        pathmodel.custom_source(str(hermes_name.parent)),
+        [build(hermes_name, version="3.13.1", slot=0)],
+        login_shell=shell,
+        login_findings=[build(shell_name, version="3.13.1", slot=0)],
+        host="arm64",
+    )
+    assert report["terminal"]["agrees_with_hermes"] is True
+    text = verdicts.scan_summary(
+        [tools_slim(tools, report)], pathmodel.custom_source(str(hermes_name.parent)), shell
+    )
+    assert "resolves these differently" not in text
+
+
 def test_scan_note_does_not_call_unorderable_copies_the_same(build, verdicts, pathmodel, tmp_path):
     """The one-line note repeats the verdict; it does not assume "same version"."""
     dated = build(write_exe(tmp_path / "a" / "python3", version="2023.10.17"), version="2023.10.17")
