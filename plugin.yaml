@@ -1,0 +1,35 @@
+name: which-copy
+label: Which Copy
+version: 1.0.0
+manifest_version: 2
+author: Hazem Samak
+license: MIT
+homepage: https://github.com/Hazem-Samak/hermes-which-copy
+description: >-
+  Answers the question that silently decides everything else: which copy of a
+  command is Hermes actually going to run? On a Mac the same tool can exist three
+  times over — a Homebrew formula, an npm global install, a pyenv or uv shim, a
+  standalone download, and Hermes's own bundled copy — and the name resolves to
+  whichever one PATH reaches first, with no warning when that is the wrong one.
+  which-copy resolves the name against the PATH Hermes itself runs with and the
+  PATH your login shell builds for your terminal, reports both when they
+  disagree, and lists every copy it can find with where it came from (Cellar,
+  npm tree, pyenv, uv, pipx, nvm, Hermes's directory, a plain folder, the macOS
+  system), the version it reports, and whether it can even run on this machine
+  (an Intel-only binary on Apple silicon is named as such). Then it gives a
+  verdict in plain language: healthy, an old copy shadowing a newer one, a dead
+  symlink sitting in front of the winner, Hermes quietly using its own bundle
+  instead of yours, or your terminal and Hermes disagreeing. One tool checks a
+  single name, one sweeps the whole environment for the usual AI tools. Read-only
+  by design: it never edits PATH, installs, uninstalls, relinks or moves
+  anything, makes no network call, needs no API key, and asks a copy its version
+  only with a bounded, shell-free probe that never sees your environment
+  variables. When something is wrong it says what and why, and leaves the fixing
+  to you.
+requires_hermes: ">=0.22.0"
+tags: [diagnostics, path, environment, cli, macos, local, privacy, tools]
+provides_tools:
+  - which_copy
+  - which_copy_scan
+provides_hooks: []
+python_dependencies: []
