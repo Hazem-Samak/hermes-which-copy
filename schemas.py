@@ -105,7 +105,7 @@ WHICH_COPY_SCAN = {
     "description": (
         "Sweep the machine for the copies the Hermes process will actually run "
         "across the usual AI tools — python and python3, node, npm, npx, bun, pnpm, "
-        "uv, pip, pipx, git, gh, brew, and the coding CLIs (claude, codex, opencode, "
+        "uv, pip3, pipx, git, gh, brew, and the coding CLIs (claude, codex, opencode, "
         "gemini, grok, aider, cursor-agent), plus any other names given. For each "
         "name it reports the winning copy on the PATH of the Hermes process, its "
         "version, where it came from, and the single most useful thing to know: an "

@@ -376,7 +376,7 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
         executed = {
             "command": [candidate.entry_path, *probe.argv],
             "cwd": "/",
-            "environment": "PATH, HOME, a locale and TERM only",
+            "environment": "stripped: PATH, HOME, a locale, TERM=dumb and color/pager settings; no credentials",
             "note": (
                 "The file you named was executed to ask it its version. Anything it writes "
                 "is its own doing; this plugin writes nothing."

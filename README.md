@@ -258,10 +258,11 @@ version flag — argv only, never a shell — with:
   many copies a sweep asks (copies it did not ask are reported as not probed);
 - its own process group, killed as a group on timeout;
 - output capped at 8 KB and truncated rather than buffered;
-- a **stripped environment**: PATH, `HOME`, a locale, `TERM=dumb`. The probed
-  program never sees `OPENAI_API_KEY` or anything else from Hermes's
-  environment. The PATH it is given is the one it would run under — Hermes's for
-  a copy found there, the shell's for a copy found in the login shell;
+- a **stripped environment**: PATH, `HOME`, a locale, `TERM=dumb`, and
+  color/pager settings. The probed program never sees `OPENAI_API_KEY` or
+  anything else from Hermes's environment. The PATH it is given is the one it
+  would run under — Hermes's for a copy found there, the shell's for a copy
+  found in the login shell;
 - `cwd=/`, so a tool that writes "next to itself" fails instead of littering
   your project.
 

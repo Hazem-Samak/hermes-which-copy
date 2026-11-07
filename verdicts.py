@@ -614,9 +614,14 @@ def _finish(
             lines.append("Architecture: %s (%s)." % (winner.arch, arch_note))
         newline_after_facts = True
     else:
-        lines.append("%s — not on Hermes's process PATH" % tool)
+        lines.append(
+            "%s — not on %s" % (tool, "the PATH you supplied" if custom else "Hermes's process PATH")
+        )
         lines.append("")
-        lines.append("Nothing named %s resolves to a program on the PATH of the Hermes process." % tool)
+        lines.append(
+            "Nothing named %s resolves to a program on %s."
+            % (tool, "the PATH you supplied" if custom else "the PATH of the Hermes process")
+        )
         newline_after_facts = False
 
     if newline_after_facts:

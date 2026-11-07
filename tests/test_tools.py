@@ -156,6 +156,19 @@ def test_which_copy_rejects_an_empty_supplied_path(tools, sandbox):
     assert payload["status"] in {"ok", "no_path"}
 
 
+def test_missing_tool_on_a_supplied_path_names_that_path(tools, sandbox):
+    empty = sandbox / "empty"
+    empty.mkdir()
+    payload = call(
+        tools,
+        {"tool": "ghost-tool", "path": str(empty), "check_login_shell": False, "include_off_path": False},
+    )
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "custom-path"
+    assert "not on the PATH you supplied" in payload["summary"]
+    assert "not on Hermes's process PATH" not in payload["summary"]
+
+
 # --------------------------------------------------------------------------- #
 # An explicit file
 
@@ -188,6 +201,7 @@ def test_path_mode_discloses_that_it_ran_the_file(tools, messy):
     executed = payload["executed"]
     assert executed["command"] == [str(messy["new"]), "--version"]
     assert executed["cwd"] == "/"
+    assert "no credentials" in executed["environment"]
     assert "this plugin writes nothing" in executed["note"]
     assert "Version check: ran" in payload["summary"]
 

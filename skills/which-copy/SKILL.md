@@ -1,7 +1,7 @@
 ---
 name: which-copy
 description: "Report which copy of a command Hermes runs, without overstating it."
-version: 1.1.1
+version: 1.1.2
 author: Hazem Samak
 license: MIT
 platforms: [macos, linux]

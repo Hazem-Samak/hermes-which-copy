@@ -197,6 +197,13 @@ def test_nothing_at_all_is_a_quiet_note(verdicts, pathmodel):
     assert "at all" in report["summary"]
 
 
+def test_missing_on_a_supplied_path_is_not_attributed_to_hermes(verdicts, pathmodel):
+    """The header must name the PATH that was searched, not Hermes's."""
+    report = verdicts.analyze("ghost", pathmodel.custom_source("/nowhere"), [], [], host="arm64")
+    assert "not on the PATH you supplied" in report["summary"]
+    assert "Hermes's process PATH" not in report["summary"]
+
+
 def test_off_path_only_says_installed_but_unreachable(build, verdicts, pathmodel, tmp_path):
     hidden = write_exe(tmp_path / "hidden" / "python3", version="3.13.1")
     report = analyse(
@@ -376,6 +383,21 @@ def test_architecture_trap_is_named(build, verdicts, pathmodel, tmp_path):
     assert report["verdict"] == "winner_cannot_run"
     assert report["severity"] == "trap"
     assert "Rosetta" in report["summary"]
+
+
+def test_cannot_run_does_not_claim_the_copy_runs(build, verdicts, pathmodel, tmp_path):
+    """A binary that could not start must not be described as running under Rosetta."""
+    finding = build(
+        write_exe(tmp_path / "bin" / "python3", version="3.9.6"),
+        version=None,
+        error="os_error: Bad CPU type in executable",
+        arch="x86_64",
+    )
+    report = analyse(verdicts, pathmodel, [finding])
+    text = next(v["text"] for v in report["verdicts"] if v["code"] == "winner_cannot_run")
+    assert "cannot run" in text
+    assert "runs under Rosetta" not in text
+    assert "needs Rosetta" in text
 
 
 # --------------------------------------------------------------------------- #

@@ -449,7 +449,7 @@ def arch_warning(arch: str, host: str | None = None) -> str | None:
     if not arch or arch in ("script", "unknown", "elf", "universal"):
         return None
     if host == "arm64" and arch == "x86_64":
-        return "it is an Intel-only binary, so it runs under Rosetta on this Mac"
+        return "it is an Intel-only binary, so it needs Rosetta to run on this Mac"
     if host == "x86_64" and arch == "arm64":
         return "it is an Apple-silicon binary and cannot run natively on this Mac"
     return None
