@@ -187,12 +187,17 @@ def custom_source(raw: str) -> PathSource:
     is, and states separately what Hermes would do with its own.
     """
     entries = split_path(raw)
+    # The note exists to explain why nothing can resolve, so it belongs only on a
+    # PATH that really is empty. Attaching it to every custom source made the JSON
+    # contradict itself: available=true, two entries, and "the PATH was empty" in
+    # the same block.
+    note = "" if entries else "The PATH you passed in was empty, so nothing can resolve in it."
     return PathSource(
         kind=CUSTOM_SOURCE,
         label="the PATH you supplied",
         entries=entries,
         available=bool(entries),
-        note="The PATH you passed in was empty, so nothing can resolve in it.",
+        note=note,
         raw=raw,
     )
 

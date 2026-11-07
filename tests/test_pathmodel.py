@@ -255,6 +255,21 @@ def test_custom_source_empty_is_unavailable(pathmodel):
     assert source.available is False
 
 
+def test_custom_source_with_entries_never_claims_the_path_was_empty(pathmodel):
+    source = pathmodel.custom_source("/x:/y")
+    assert source.entries == ("/x", "/y")
+    assert source.note == ""
+    # The block the JSON report shows must not contradict itself: entries listed
+    # and available, yet "the PATH you passed in was empty".
+    assert source.as_dict()["note"] == ""
+
+
+def test_custom_source_empty_still_says_so(pathmodel):
+    source = pathmodel.custom_source("")
+    assert "was empty" in source.note
+    assert source.as_dict()["note"] == source.note
+
+
 def test_parse_environment_dump_ignores_banners(pathmodel):
     payload = (
         b"Welcome to zsh!\n"
