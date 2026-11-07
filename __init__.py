@@ -10,14 +10,20 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import schemas, tools
-
 logger = logging.getLogger(__name__)
 
 TOOLSET = "diagnostics"
 
 
 def register(ctx) -> None:
+    # Imported here rather than at module level for two reasons. Nothing is
+    # loaded until Hermes actually registers the plugin, and this directory's
+    # name ("hermes-which-copy") is not a valid Python identifier: pytest
+    # imports this file as a top-level module when it collects the repository
+    # root, and a module-level relative import makes a plain `pytest` run fail
+    # with "attempted relative import with no known parent package".
+    from . import schemas, tools
+
     ctx.register_tool(
         name="which_copy",
         toolset=TOOLSET,

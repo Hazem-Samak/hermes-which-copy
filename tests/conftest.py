@@ -8,6 +8,7 @@ imports instead of a rewritten copy.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import sys
@@ -18,6 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "which_copy_plugin"
+SUBMODULES = ("schemas", "known_tools", "origin", "pathmodel", "verdicts", "versions", "tools")
 
 if PACKAGE not in sys.modules:
     spec = importlib.util.spec_from_file_location(
@@ -26,6 +28,11 @@ if PACKAGE not in sys.modules:
     module = importlib.util.module_from_spec(spec)
     sys.modules[PACKAGE] = module
     spec.loader.exec_module(module)
+    # The plugin imports its own modules inside register(), so load them here
+    # for the fixtures below. This is also what makes the fixtures independent
+    # of whether register() ran.
+    for name in SUBMODULES:
+        importlib.import_module("%s.%s" % (PACKAGE, name))
 
 
 @pytest.fixture(scope="session")

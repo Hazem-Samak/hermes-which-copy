@@ -78,27 +78,32 @@ def _finding(candidate: pathmodel.Candidate) -> verdicts.Finding:
 
 
 def _probe_all(
-    targets: Sequence[tuple[str, str]],
+    targets: Sequence[tuple[str, str, str]],
     *,
     budget: float,
     per_probe: float,
-    path_value: str,
 ) -> dict[tuple[str, str], Probe]:
-    """Probe each ``(entry, tool)`` once, in parallel, inside a shared deadline."""
+    """Probe each ``(entry, tool)`` once, in parallel, inside a shared deadline.
+
+    Each target carries the PATH that copy would see, so a copy found through
+    the login shell is asked its version with the shell's PATH — not with
+    Hermes's, which would make "it could not find a command it needs" a lie.
+    """
     unique = []
     seen = set()
-    for target in targets:
-        if target in seen:
+    for entry, tool, path_value in targets:
+        key = (entry, tool)
+        if key in seen:
             continue
-        seen.add(target)
-        unique.append(target)
+        seen.add(key)
+        unique.append((entry, tool, path_value))
     if not unique:
         return {}
 
     deadline = time.monotonic() + budget
     results: dict[tuple[str, str], Probe] = {}
 
-    def work(entry_path: str, tool: str) -> Probe:
+    def work(entry_path: str, tool: str, path_value: str) -> Probe:
         remaining = deadline - time.monotonic()
         if remaining <= 0.05:
             return Probe(argv=(), error="not_probed")
@@ -111,7 +116,7 @@ def _probe_all(
 
     workers = max(1, min(MAX_WORKERS, len(unique)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(work, entry, tool): (entry, tool) for entry, tool in unique}
+        futures = {pool.submit(work, entry, tool, path): (entry, tool) for entry, tool, path in unique}
         for future in as_completed(futures):
             key = futures[future]
             try:
@@ -167,16 +172,19 @@ def _probe_report(
             tool, source, on_path, off_path, shell, login_findings, probed=False, probed_note=probed_note
         )
 
-    targets: list[tuple[str, str]] = []
+    targets: list[tuple[str, str, str]] = []
     for item in on_path:
         if item.candidate.is_live:
-            targets.append((item.candidate.entry_path, tool))
+            targets.append((item.candidate.entry_path, tool, source.raw))
     for item in off_path[:4]:
-        targets.append((item.candidate.entry_path, tool))
+        targets.append((item.candidate.entry_path, tool, source.raw))
     if login_findings:
-        targets.append((login_findings[0].candidate.entry_path, tool))
+        shell_path = shell.raw if shell is not None else source.raw
+        live = verdicts.first_live(login_findings)
+        if live is not None:
+            targets.append((live.candidate.entry_path, tool, shell_path))
 
-    probes = _probe_all(targets, budget=budget, per_probe=per_probe, path_value=source.raw)
+    probes = _probe_all(targets, budget=budget, per_probe=per_probe)
     return _analyze(
         tool,
         source,
@@ -277,14 +285,16 @@ def which_copy(args: dict = None, **kwargs) -> str:
         report["status"] = "ok"
         report["mode"] = "custom-path" if custom_path else "name"
         if custom_path:
-            truth = _hermes_truth(raw_name)
+            truth = _hermes_truth(raw_name, probe_versions)
             if truth:
                 report["summary"] = report["summary"].rstrip() + "\n\n" + truth + "\n"
                 report["hermes_truth"] = truth
         report["elapsed_ms"] = int((time.monotonic() - started) * 1000)
         report["how_to_read"] = (
-            "Path is what Hermes would execute for this name. 'PATH n of N' is the slot it "
-            "won. The copies list is in PATH order; anything after the winner never runs."
+            "Path is the copy the Hermes process resolves for this name (its os.environ PATH). "
+            "'PATH n of N' is the slot it won. The copies list is in PATH order; anything after "
+            "the winner never runs. Commands run through Hermes's terminal tool use a login shell "
+            "plus directories Hermes adds, so that shell can resolve a different copy."
         )
         return json.dumps(report, indent=2, ensure_ascii=False)
     except InvalidToolName as exc:
@@ -297,8 +307,8 @@ def which_copy(args: dict = None, **kwargs) -> str:
         )
 
 
-def _hermes_truth(tool: str) -> str:
-    """One sentence about what Hermes itself would run, for a supplied PATH report."""
+def _hermes_truth(tool: str, probe_versions: bool = True) -> str:
+    """One sentence about what Hermes's own process PATH resolves, for a supplied-PATH report."""
     real = pathmodel.hermes_source()
     if not real.available:
         return ""
@@ -308,8 +318,17 @@ def _hermes_truth(tool: str) -> str:
         return ""
     live = [candidate for candidate in candidates if candidate.is_live]
     if not live:
-        return "Separately: this is not the PATH Hermes runs with, and Hermes has no %s on its own PATH." % tool
+        return (
+            "Separately: this is not the PATH Hermes's process runs with, and Hermes's own PATH "
+            "has no %s." % tool
+        )
     winner = live[0]
+    if not probe_versions:
+        # probe_versions: false means no process is started, for this line too.
+        return (
+            "Separately: this is not the PATH Hermes's process runs with. For %s, Hermes's own "
+            "PATH resolves to %s (version not checked)." % (tool, pathmodel.tidy(winner.entry_path))
+        )
     probe = versions.probe(
         winner.entry_path,
         tool=tool,
@@ -318,13 +337,19 @@ def _hermes_truth(tool: str) -> str:
     )
     version = " (%s)" % probe.version if probe.version else ""
     return (
-        "Separately: this is not the PATH Hermes runs with. For %s, Hermes itself would "
-        "run %s%s." % (tool, pathmodel.tidy(winner.entry_path), version)
+        "Separately: this is not the PATH Hermes's process runs with. For %s, Hermes's own "
+        "PATH resolves to %s%s." % (tool, pathmodel.tidy(winner.entry_path), version)
     )
 
 
 def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_shell: bool) -> str:
-    """``which_copy("/usr/bin/python3")`` — facts about one file on disk."""
+    """``which_copy("/usr/bin/python3")`` — facts about one file on disk.
+
+    The file is named by the caller, so it is the one case where the plugin can
+    be pointed at something that is not a known tool. It is executed (with its
+    version flag) only when ``probe_versions`` is true, and the report says
+    plainly that it ran, with the exact argv.
+    """
     expanded = os.path.abspath(os.path.expanduser(raw_path))
     name = os.path.basename(expanded)
     if not name:
@@ -339,6 +364,7 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
         )
 
     finding = _finding(candidate)
+    executed = None
     if probe_versions and candidate.is_live:
         probe = versions.probe(
             candidate.entry_path,
@@ -347,6 +373,15 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
             path_value=os.environ.get("PATH", ""),
         )
         finding = dataclasses.replace(finding, probe=probe)
+        executed = {
+            "command": [candidate.entry_path, *probe.argv],
+            "cwd": "/",
+            "environment": "PATH, HOME, a locale and TERM only",
+            "note": (
+                "The file you named was executed to ask it its version. Anything it writes "
+                "is its own doing; this plugin writes nothing."
+            ),
+        }
 
     source, shell = _sources(check_shell)
     on_path = [
@@ -361,7 +396,11 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
     )
 
     lines = [
-        "%s — %s" % (expanded, "a copy Hermes would run" if is_winner else "not the copy Hermes runs"),
+        "%s — %s"
+        % (
+            expanded,
+            "the copy Hermes's process PATH picks" if is_winner else "not the copy Hermes's process PATH picks",
+        ),
         "",
         " · ".join(
             part
@@ -377,33 +416,46 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
         lines.append("Evidence: %s." % finding.origin.evidence)
     if not candidate.is_live:
         lines.append("")
-        lines.append("This is %s, so nothing can execute it." % candidate.kind_label)
+        lines.append("Nothing can execute this path — %s." % candidate.kind_label)
     elif winning is not None and not is_winner:
         lines.append("")
         lines.append(
-            "For the name %s, Hermes runs %s instead — this file is never reached."
+            "For the name %s, Hermes's process PATH picks %s instead — this file is never reached."
             % (name, pathmodel.tidy(winning.candidate.entry_path))
         )
     elif winning is None:
         lines.append("")
-        lines.append("No copy of %s is on Hermes's PATH at all." % name)
+        lines.append("No copy of %s is on Hermes's process PATH at all." % name)
+    if executed:
+        lines.append("")
+        lines.append(
+            "Version check: ran %s (3-second limit, cwd=/, stripped environment)."
+            % " ".join(executed["command"])
+        )
 
     payload = {
         "status": "ok",
         "mode": "path",
         "tool": name,
+        # The file the caller asked about. It stays "path"; the PATH it was
+        # resolved against is "path_source", so one key never means two things.
         "path": expanded,
+        "path_source": source.as_dict(),
         "summary": "\n".join(lines).strip() + "\n",
         "verdict": "ok_single" if is_winner else ("not_installed" if winning is None else "shadowed_by_other"),
         "severity": "ok" if is_winner else "note",
-        "headline": "%s: %s" % (expanded, "this is the copy Hermes runs" if is_winner else "not the copy Hermes runs"),
+        "headline": "%s: %s"
+        % (
+            expanded,
+            "the copy Hermes's process PATH picks" if is_winner else "not the copy Hermes's process PATH picks",
+        ),
         "file": finding.candidate.as_dict(),
         "version": finding.version,
         "origin": finding.origin.as_dict(),
         "arch": finding.arch,
         "is_path_winner": is_winner,
+        "executed": executed,
         "path_winner": verdicts._finding_dict(winning),
-        "path": source.as_dict(),
         "elapsed_ms": int((time.monotonic() - started) * 1000),
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
@@ -476,21 +528,21 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
 
         probes: dict[tuple[str, str], Probe] = {}
         if probe_versions:
-            targets: list[tuple[str, str]] = []
+            targets: list[tuple[str, str, str]] = []
             for name, on_path, off_path in collected:
                 live = [item for item in on_path if item.candidate.is_live]
                 for item in live[:MAX_PROBES_PER_TOOL]:
-                    targets.append((item.candidate.entry_path, name))
+                    targets.append((item.candidate.entry_path, name, source.raw))
                 for item in off_path[:1]:
-                    targets.append((item.candidate.entry_path, name))
-                if login_map.get(name):
-                    targets.append((login_map[name][0].candidate.entry_path, name))
+                    targets.append((item.candidate.entry_path, name, source.raw))
+                login_live = verdicts.first_live(login_map.get(name, []))
+                if login_live is not None and login_source is not None:
+                    targets.append((login_live.candidate.entry_path, name, login_source.raw))
             threshold = MAX_PROBES_PER_SCAN
             probes = _probe_all(
                 targets[:threshold],
                 budget=SCAN_PROBE_BUDGET_S,
                 per_probe=SCAN_PROBE_TIMEOUT_S,
-                path_value=source.raw,
             )
 
         reports: list[dict] = []
@@ -544,9 +596,10 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
             "host_arch": origin_module.host_arch(),
             "elapsed_ms": int((time.monotonic() - started) * 1000),
             "how_to_read": (
-                "Each line is one tool: the copy Hermes runs for that name, and the single "
-                "most useful thing to know about it. Use which_copy on a name for the full "
-                "picture."
+                "Each line is one tool: the copy the Hermes process resolves for that name, and "
+                "the single most useful thing to know about it. Use which_copy on a name for the "
+                "full picture. Hermes's terminal tool adds directories to its shell's PATH, so a "
+                "command it runs can resolve a different copy."
             ),
         }
         return json.dumps(payload, indent=2, ensure_ascii=False)
@@ -582,9 +635,28 @@ def _slim(report: dict) -> dict:
         "copies": len(report.get("copies") or []),
         "terminal": {
             "available": terminal.get("available"),
-            "winner_path": terminal_winner.get("path"),
-            "winner_path_raw": terminal_winner.get("path_raw"),
-            "winner_version": terminal_winner.get("version"),
+            "agrees_with_hermes": terminal.get("agrees_with_hermes"),
+            # The shell's winner has to survive the trim: the sweep compares it
+            # with the Hermes copy to name the tools where the two disagree. A
+            # flat subset without "winner" made that line impossible to emit.
+            "winner": (
+                {
+                    "path": terminal_winner.get("path"),
+                    "path_raw": terminal_winner.get("path_raw"),
+                    "version": terminal_winner.get("version"),
+                    "arch": terminal_winner.get("arch"),
+                }
+                if terminal_winner
+                else None
+            ),
+            "skipped": [
+                {
+                    "path": item.get("path"),
+                    "path_raw": item.get("path_raw"),
+                    "kind_label": item.get("kind_label"),
+                }
+                for item in (terminal.get("skipped") or [])
+            ],
         },
         "verdicts": [
             {"code": item["code"], "severity": item["severity"], "text": item["text"]}

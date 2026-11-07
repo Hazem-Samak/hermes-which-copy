@@ -8,7 +8,14 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-DEMO_ROOT="${DEMO_ROOT:-$HOME/which-copy-demo}"
+REPO="$(cd "$HERE/.." && pwd)"
+
+# shellcheck source=demo/guard.sh
+. "$HERE/guard.sh"
+
+# Resolved once, with the same guard setup.sh and cleanup.sh use, so the paths
+# printed below are the paths that were actually built.
+DEMO_ROOT="$(demo_root_or_die "${DEMO_ROOT:-$HOME/which-copy-demo}" "$REPO")"
 
 DEMO_ROOT="$DEMO_ROOT" bash "$HERE/setup.sh" >/dev/null
 

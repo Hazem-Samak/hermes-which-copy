@@ -86,7 +86,7 @@ def test_manifest_matches_the_registrations(plugin):
     assert manifest["python_dependencies"] == []
     assert manifest["requires_hermes"].startswith(">=")
     assert manifest["license"] == "MIT"
-    assert manifest["version"] == "1.0.0"
+    assert manifest["version"] == "1.1.0"
     assert len(manifest["description"]) > 200
 
 

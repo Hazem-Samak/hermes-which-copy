@@ -313,6 +313,41 @@ def test_login_shell_source_reports_unstartable_shell(monkeypatch, pathmodel):
     assert "Could not start" in source.note
 
 
+def test_login_shell_probe_is_seeded_with_the_system_path(pathmodel, monkeypatch):
+    """The shell must not inherit Hermes's PATH — that would fake agreement."""
+    import subprocess
+
+    seen = {}
+    stdout = (
+        "\n%s\nPATH=/usr/bin:/bin:/opt/homebrew/bin\x00SHELL=/bin/zsh\x00%s\n"
+        % (pathmodel.LOGIN_SHELL_BEGIN, pathmodel.LOGIN_SHELL_END)
+    ).encode()
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr=b"")
+
+    monkeypatch.setattr(pathmodel.subprocess, "run", fake_run)
+    monkeypatch.setattr(pathmodel, "login_shell_path", lambda: "/bin/zsh")
+    monkeypatch.setenv("PATH", "/hermes/only/bin:/usr/bin:/bin")
+
+    source = pathmodel.login_shell_source()
+
+    assert seen["env"]["PATH"] == pathmodel.SYSTEM_DEFAULT_PATH
+    assert "hermes/only" not in seen["env"]["PATH"]
+    assert source.entries == ("/usr/bin", "/bin", "/opt/homebrew/bin")
+    assert source.seeded == pathmodel.SYSTEM_DEFAULT_PATH
+    assert source.as_dict()["seeded_path"] == pathmodel.SYSTEM_DEFAULT_PATH
+
+
+def test_hermes_source_is_labelled_as_the_process_path(pathmodel, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    source = pathmodel.hermes_source()
+    assert source.label == "Hermes's process PATH"
+    assert source.as_dict()["label"] == "Hermes's process PATH"
+
+
 # --------------------------------------------------------------------------- #
 # Display
 

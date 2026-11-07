@@ -114,3 +114,84 @@ def test_skill_files_do_not_promise_a_fix():
 def test_plugin_yaml_declares_no_python_dependencies():
     manifest = (ROOT / "plugin.yaml").read_text()
     assert "python_dependencies: []" in manifest
+
+
+# --------------------------------------------------------------------------- #
+# The demo scripts delete a directory: the guard has to hold
+
+
+def _run_setup(demo_root: str, home: Path):
+    import os
+    import shutil
+    import subprocess
+
+    if shutil.which("bash") is None:
+        pytest.skip("the demo scripts need bash")
+    env = dict(os.environ)
+    env["DEMO_ROOT"] = demo_root
+    env["HOME"] = str(home)
+    return subprocess.run(
+        ["bash", str(ROOT / "demo" / "setup.sh")],
+        cwd=str(home),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def test_demo_setup_refuses_the_filesystem_root(tmp_path):
+    result = _run_setup("/", tmp_path)
+    assert result.returncode != 0
+    assert "Refusing" in result.stdout + result.stderr
+
+
+def test_demo_setup_refuses_a_foreign_non_empty_directory(tmp_path):
+    foreign = tmp_path / "not-the-demo"
+    foreign.mkdir()
+    keep = foreign / "keep.txt"
+    keep.write_text("important\n")
+
+    result = _run_setup(str(foreign), tmp_path)
+
+    assert result.returncode != 0
+    assert "Refusing" in result.stdout + result.stderr
+    assert keep.read_text() == "important\n"
+
+
+def test_demo_setup_still_builds_the_demo(tmp_path):
+    import shutil
+
+    if shutil.which("python3") is None:
+        pytest.skip("the demo needs a python3 to delegate to")
+    root = tmp_path / "which-copy-demo"
+
+    result = _run_setup(str(root), tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert (root / ".which-copy-demo").exists()
+    assert (root / "bin-2021" / "python3").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Wording: the docs claim what the code does
+
+
+def test_readme_does_not_claim_the_process_path_is_what_commands_inherit():
+    readme = (ROOT / "README.md").read_text()
+    assert "what anything Hermes spawns inherits" not in readme
+    assert "terminal tool" in readme
+
+
+def test_schema_probe_versions_description_mentions_the_login_shell(plugin):
+    description = plugin.schemas.WHICH_COPY["parameters"]["properties"]["probe_versions"][
+        "description"
+    ]
+    assert "check_login_shell" in description
+    assert "no process started at all" not in description
+
+
+def test_schema_says_a_named_path_is_executed(plugin):
+    description = plugin.schemas.WHICH_COPY["parameters"]["properties"]["tool"]["description"]
+    assert "probe_versions" in description
+    assert "executed" in description

@@ -140,7 +140,26 @@ def test_same_version_twice_is_a_note_not_a_trap(build, verdicts, pathmodel, tmp
     codes = {item["code"] for item in report["verdicts"]}
     assert "multiple_copies" in codes
     assert report["severity"] == "note"
-    assert "same version" in report["summary"]
+    assert "every one of them reports 3.13.1" in report["summary"]
+
+
+def test_multiple_copies_with_an_unknown_version_are_not_called_equal(
+    build, verdicts, pathmodel, tmp_path
+):
+    """A copy that never answered is not evidence that it is the same version."""
+    known = write_exe(tmp_path / "a" / "python3", version="3.13.1")
+    silent = write_exe(tmp_path / "b" / "python3", body="#!/bin/sh\nexit 0\n")
+    findings = [
+        build(known, version="3.13.1", slot=0),
+        build(silent, error="no_output", slot=1),
+    ]
+    report = analyse(verdicts, pathmodel, findings)
+    codes = {item["code"] for item in report["verdicts"]}
+    assert "multiple_copies" in codes
+    # It must not claim they match; it must say a copy stayed silent.
+    assert "every one of them reports" not in report["summary"]
+    assert "reported no version" in report["summary"]
+    assert report["severity"] == "warning"
 
 
 # --------------------------------------------------------------------------- #
@@ -229,6 +248,77 @@ def test_terminal_disagreeing_is_a_warning(build, verdicts, pathmodel, tmp_path,
     assert "hermes_vs_terminal" in codes
     assert report["severity"] in {"warning", "trap"}
     assert "In your login shell (zsh): python3 →" in report["summary"]
+    assert report["terminal"]["agrees_with_hermes"] is False
+
+
+def test_terminal_dead_entry_is_not_called_the_terminal_winner(
+    build, verdicts, pathmodel, tmp_path
+):
+    """A dead entry is skipped by the shell too, so it is not what the shell runs."""
+    broken = tmp_path / "shell-broken" / "python3"
+    broken.parent.mkdir(parents=True)
+    broken.symlink_to(tmp_path / "nowhere" / "python3")
+    shell_live = write_exe(tmp_path / "shell-bin" / "python3", version="3.15.2")
+    hermes_copy = write_exe(tmp_path / "hermes-bin" / "python3", version="3.14.9")
+    findings = [build(hermes_copy, version="3.14.9", slot=0)]
+    login = [build(broken, slot=0), build(shell_live, version="3.15.2", slot=1)]
+    shell = pathmodel.PathSource(
+        kind=pathmodel.LOGIN_SHELL_SOURCE,
+        label="your login shell (zsh)",
+        entries=(str(broken.parent), str(shell_live.parent)),
+        raw=":".join((str(broken.parent), str(shell_live.parent))),
+        seeded="/usr/bin:/bin",
+    )
+    report = analyse(verdicts, pathmodel, findings, shell=shell, login_findings=login)
+
+    assert report["terminal"]["winner"]["path_raw"] == str(shell_live)
+    assert report["terminal"]["skipped"][0]["path_raw"] == str(broken)
+    assert "skips it too" in report["summary"]
+    assert "broken symlink" in report["summary"]
+    # The comparison is against the copy the shell would run, not the dead entry.
+    assert "broken" not in report["terminal"]["winner"]["path"]
+
+
+def test_terminal_with_only_a_dead_entry_has_no_winner(build, verdicts, pathmodel, tmp_path):
+    broken = tmp_path / "shell-broken" / "python3"
+    broken.parent.mkdir(parents=True)
+    broken.symlink_to(tmp_path / "nowhere" / "python3")
+    hermes_copy = write_exe(tmp_path / "hermes-bin" / "python3", version="3.14.9")
+    shell = pathmodel.PathSource(
+        kind=pathmodel.LOGIN_SHELL_SOURCE,
+        label="your login shell (zsh)",
+        entries=(str(broken.parent),),
+        raw=str(broken.parent),
+    )
+    report = analyse(
+        verdicts,
+        pathmodel,
+        [build(hermes_copy, version="3.14.9", slot=0)],
+        shell=shell,
+        login_findings=[build(broken, slot=0)],
+    )
+    assert report["terminal"]["winner"] is None
+    assert report["terminal"]["agrees_with_hermes"] is None
+    assert "nothing usable is named python3" in report["summary"]
+    assert "hermes_vs_terminal" not in {item["code"] for item in report["verdicts"]}
+
+
+def test_terminal_agreeing_is_reported_as_agreement(build, verdicts, pathmodel, tmp_path):
+    same = write_exe(tmp_path / "bin" / "python3", version="3.13.1")
+    shell = pathmodel.PathSource(
+        kind=pathmodel.LOGIN_SHELL_SOURCE,
+        label="your login shell (zsh)",
+        entries=(str(same.parent),),
+        raw=str(same.parent),
+    )
+    report = analyse(
+        verdicts,
+        pathmodel,
+        [build(same, version="3.13.1", slot=0)],
+        shell=shell,
+        login_findings=[build(same, version="3.13.1", slot=0)],
+    )
+    assert report["terminal"]["agrees_with_hermes"] is True
 
 
 def test_terminal_agreeing_says_nothing(build, verdicts, pathmodel, tmp_path):
@@ -298,7 +388,8 @@ def test_supplied_path_is_labelled_as_supplied(build, verdicts, pathmodel, tmp_p
     assert report["path"]["kind"] == "custom"
     assert "wins in the PATH you supplied" in report["summary"]
     assert "wins here" in report["summary"]
-    assert "Hermes runs" not in report["summary"]
+    # It must not slide into claiming the Hermes copy for a PATH the caller gave.
+    assert "Hermes's process PATH resolves to" not in report["summary"]
 
 
 # --------------------------------------------------------------------------- #
@@ -333,7 +424,7 @@ def _slim(verdicts, pathmodel, findings, tool, **kwargs):
     return report
 
 
-def test_scan_summary_counts_and_table(build, verdicts, pathmodel, tmp_path):
+def test_scan_summary_counts_and_table(build, verdicts, pathmodel, tools, tmp_path):
     old = build(write_exe(tmp_path / "a" / "python3", version="3.9.2"), version="3.9.2")
     new = build(write_exe(tmp_path / "b" / "python3", version="3.13.1"), version="3.13.1")
     good = build(write_exe(tmp_path / "c" / "git", version="2.39.3"), version="2.39.3")
@@ -342,7 +433,7 @@ def test_scan_summary_counts_and_table(build, verdicts, pathmodel, tmp_path):
     clean = verdicts.analyze("git", pathmodel.custom_source("/c"), [good], host="arm64")
     missing = verdicts.analyze("codex", pathmodel.custom_source("/c"), [], host="arm64")
 
-    slim = [verdicts_slim(verdicts, report) for report in (shadowed, clean, missing)]
+    slim = [tools_slim(tools, report) for report in (shadowed, clean, missing)]
     text = verdicts.scan_summary(slim, pathmodel.custom_source("/a:/b:/c"), None)
     assert "Checked 3 tools" in text
     assert "1 trap" in text
@@ -350,33 +441,15 @@ def test_scan_summary_counts_and_table(build, verdicts, pathmodel, tmp_path):
     # traps are printed before clean tools
     assert text.index("python3") < text.index("git")
     assert "older copy wins" in text
+    assert "Scope:" in text
 
 
-def verdicts_slim(verdicts, report):
-    """The same trimming the scan handler applies."""
-    winner = report.get("winner")
-    return {
-        "tool": report["tool"],
-        "verdict": report["verdict"],
-        "severity": report["severity"],
-        "headline": report["headline"],
-        "winner": (
-            {
-                "path": winner["path"],
-                "path_raw": winner["path_raw"],
-                "version": winner["version"],
-                "origin": winner["origin"],
-            }
-            if winner
-            else None
-        ),
-        "copies": len(report.get("copies") or []),
-        "terminal": (report.get("terminal") or {}),
-        "verdicts": report["verdicts"],
-    }
+def tools_slim(tools, report):
+    """The scan handler's own trim, so this test cannot drift from production."""
+    return tools._slim(report)
 
 
-def test_scan_summary_notes_terminal_disagreement(build, verdicts, pathmodel, tmp_path):
+def test_scan_summary_notes_terminal_disagreement(build, verdicts, pathmodel, tools, tmp_path):
     hermes_copy = build(write_exe(tmp_path / "h" / "python3", version="3.14.9"), version="3.14.9")
     login_copy = build(write_exe(tmp_path / "s" / "python3", version="3.15.2"), version="3.15.2")
     shell = pathmodel.PathSource(
@@ -393,5 +466,17 @@ def test_scan_summary_notes_terminal_disagreement(build, verdicts, pathmodel, tm
         login_findings=[login_copy],
         host="arm64",
     )
-    text = verdicts.scan_summary([verdicts_slim(verdicts, report)], pathmodel.custom_source("/h"), shell)
+    text = verdicts.scan_summary([tools_slim(tools, report)], pathmodel.custom_source("/h"), shell)
     assert "Your terminal resolves these differently: python3" in text
+
+
+def test_scan_note_does_not_call_unorderable_copies_the_same(build, verdicts, pathmodel, tmp_path):
+    """The one-line note repeats the verdict; it does not assume "same version"."""
+    dated = build(write_exe(tmp_path / "a" / "python3", version="2023.10.17"), version="2023.10.17")
+    semantic = build(write_exe(tmp_path / "b" / "python3", version="3.13.1"), version="3.13.1")
+    report = verdicts.analyze(
+        "python3", pathmodel.custom_source("/a:/b"), [dated, semantic], host="arm64"
+    )
+    note = verdicts._scan_note(report)
+    assert "cannot be ordered" in note
+    assert "same version" not in note

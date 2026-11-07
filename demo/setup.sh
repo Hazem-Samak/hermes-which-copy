@@ -10,10 +10,19 @@
 # never break a shell that happens to use it.
 set -euo pipefail
 
-DEMO_ROOT="${DEMO_ROOT:-$HOME/which-copy-demo}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
 
-rm -rf "$DEMO_ROOT"
-mkdir -p "$DEMO_ROOT/bin-2021" "$DEMO_ROOT/bin-2025" "$DEMO_ROOT/bin-broken"
+# shellcheck source=demo/guard.sh
+. "$HERE/guard.sh"
+
+# The guard refuses "/", the home directory, the repository, and any existing
+# non-empty directory that is not this demo, and prints the resolved path.
+DEMO_ROOT="$(demo_root_or_die "${DEMO_ROOT:-$HOME/which-copy-demo}" "$REPO")"
+
+rm -rf -- "$DEMO_ROOT"
+mkdir -p -- "$DEMO_ROOT/bin-2021" "$DEMO_ROOT/bin-2025" "$DEMO_ROOT/bin-broken"
+: > "$DEMO_ROOT/$WHICH_COPY_DEMO_MARKER"
 
 REAL_PYTHON="$(command -v python3 || true)"
 if [ -z "$REAL_PYTHON" ]; then

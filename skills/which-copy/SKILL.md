@@ -1,7 +1,7 @@
 ---
 name: which-copy
 description: "Report which copy of a command Hermes runs, without overstating it."
-version: 1.0.0
+version: 1.1.0
 author: Hazem Samak
 license: MIT
 platforms: [macos, linux]
@@ -22,25 +22,35 @@ add one useful sentence — not to rewrite it.
    already names paths and versions, already says what is wrong. Retyping it in
    your own words loses the paths, which are the whole point.
 2. **Lead with one line of your own**: the answer to the question that was asked.
-   *"Hermes runs its own Python 3.14.9, not the one in your PATH."*
+   *"Hermes's own PATH picks Python 3.14.9, not the Homebrew 3.15.2 your terminal
+   runs."*
 3. **Then stop.** One or two sentences total. If the person wants the full
    picture they will ask for it.
 
 ## Say this, not that
 
-- **"Hermes runs X"** — correct for the default check, which reads the PATH the
-  Hermes process actually has.
-- **"Your terminal runs Y"** — only when the report's `terminal` block is
-  available. That is read from the login shell, which is what a terminal gets.
+- **"Hermes's own PATH picks X"** — correct for the default check, which reads
+  the `PATH` in the environment of the running Hermes process. It is what a
+  subprocess spawned with that environment resolves, not necessarily what a
+  command typed into Hermes's terminal tool gets.
+- **"Your terminal runs Y"** — only when the report's `terminal` block has a
+  winner. That shell was started from the system default PATH and then ran the
+  user's startup files, so the entries are theirs; the report says so.
 - **"In the PATH you gave me, X wins"** — when the call passed `path`. Never
   slide from that into claiming it is what Hermes uses; the report says
-  otherwise in its last line.
+  otherwise in its own last lines.
 - **"An older copy is shadowing a newer one"** — only when `verdict` is
   `shadowed_by_older`. The report refuses to order versions that were never
   meant to be compared, and so should you.
 
 ## Never do this
 
+- **Never merge the three PATHs into one claim.** Hermes's process PATH, the
+  user's login shell, and the PATH Hermes's terminal tool builds for a command
+  are different things. The report measures the first two and explicitly says
+  the third can differ; do not "tidy" that sentence away.
+- **Never say a copy matches another because nothing said otherwise.** "not
+  probed" and "reported no version" are not "same version".
 - **Never say you fixed, cleaned, or repaired PATH.** These tools only read. They
   do not move, relink, install, uninstall or unset anything, and claiming
   otherwise makes the user think a problem is gone when it is not.
@@ -67,3 +77,8 @@ rebuilds its own PATH at startup.
 | "is anything broken or duplicated on my PATH?" | `which_copy_scan` |
 | "what about this PATH from my cron job / script?" | `which_copy` with `tool` and `path` |
 | "is this specific file the one that runs?" | `which_copy` with an absolute path as `tool` |
+
+If the person names an absolute path, the tool will execute that file with its
+version flag (`probe_versions` on by default). The report's `executed` field and
+its "Version check: ran …" line say so — keep that line, and mention it if the
+person did not expect their file to be run.

@@ -2,10 +2,13 @@
 
 Two things this module refuses to do:
 
-* It never treats "there is only one PATH" as true. Hermes has its own PATH (the
-  environment of the process running Hermes, inherited by anything Hermes
-  spawns), and your terminal has another one, built by your shell's login files.
-  Both are resolved here, separately, and labelled.
+* It never treats "there is only one PATH" as true. There are at least three
+  that matter: the PATH of the process running Hermes (``os.environ``, what a
+  subprocess spawned with that environment gets), the PATH Hermes's terminal
+  tool builds for a command (a login shell plus the directories Hermes adds),
+  and the PATH a plain terminal gets from the user's own startup files. This
+  module reads the first and the third exactly, and says in the report that the
+  second can differ instead of pretending to have measured it.
 * It never guesses about a file. A candidate is inspected with ``lstat`` (to see
   the link itself) and ``stat`` (to see what it points at), so a broken symlink
   is reported as broken instead of being skipped or counted as installed.
@@ -36,6 +39,13 @@ CUSTOM_SOURCE = "custom"
 LOGIN_SHELL_TIMEOUT = 3.0
 LOGIN_SHELL_BEGIN = "__WHICHCOPY_ENV_BEGIN__"
 LOGIN_SHELL_END = "__WHICHCOPY_ENV_END__"
+
+#: The PATH a freshly launched terminal starts from on macOS (and most Linux
+#: desktops): the system default from launchd / login(1), not Hermes's PATH.
+#: The login-shell probe is seeded with exactly this, so every entry the shell
+#: reports beyond it comes from the user's own startup files rather than from
+#: Hermes's environment leaking in.
+SYSTEM_DEFAULT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 #: How many entries of a PATH are shown before the report says "and N more".
 PATH_PREVIEW = 8
@@ -96,9 +106,12 @@ class PathSource:
     degraded: bool = False
     note: str = ""
     raw: str = ""
+    #: For a login shell: the PATH the shell was started with, before its own
+    #: startup files ran. It is the system default, never Hermes's PATH.
+    seeded: str = ""
 
     def as_dict(self, home: str = "") -> dict:
-        return {
+        payload = {
             "kind": self.kind,
             "label": self.label,
             "available": self.available,
@@ -107,6 +120,9 @@ class PathSource:
             "entry_count": len(self.entries),
             "entries": [_tidy(p, home) for p in self.entries[:64]],
         }
+        if self.seeded:
+            payload["seeded_path"] = self.seeded
+        return payload
 
 
 def split_path(raw: str | None) -> tuple[str, ...]:
@@ -135,14 +151,22 @@ def hermes_home() -> str:
 
 
 def hermes_source(raw: str | None = None) -> PathSource:
-    """The PATH Hermes itself runs with (what it hands to whatever it spawns)."""
+    """The PATH this Hermes process was started with — ``os.environ["PATH"]``.
+
+    It is what any subprocess spawned with this process's environment resolves
+    names against. It is **not** necessarily what a command typed into Hermes's
+    terminal tool gets: that tool runs the command in a login shell whose PATH
+    is the shell's own plus directories Hermes appends (``~/.local/bin``,
+    ``$HERMES_HOME/bin``, Homebrew's defaults), so the copy that wins there can
+    differ. The report says so instead of pretending the two are one PATH.
+    """
     if raw is None:
         raw = os.environ.get("PATH", "")
     entries = split_path(raw)
     if not entries:
         return PathSource(
             kind=HERMES_SOURCE,
-            label="Hermes's own PATH",
+            label="Hermes's process PATH",
             entries=(),
             available=False,
             note="Hermes has no PATH in its environment, so nothing can resolve by name.",
@@ -150,7 +174,7 @@ def hermes_source(raw: str | None = None) -> PathSource:
         )
     return PathSource(
         kind=HERMES_SOURCE,
-        label="Hermes's own PATH",
+        label="Hermes's process PATH",
         entries=entries,
         raw=raw,
     )
@@ -196,12 +220,18 @@ def _login_shell_env() -> dict:
     The user's own shell startup files run here, so they need the basics
     (``HOME``, ``USER``, ``TERM``) — but nothing else from Hermes's environment
     is handed over, and no secret in it is passed along.
+
+    ``PATH`` is seeded with :data:`SYSTEM_DEFAULT_PATH`, *not* with Hermes's
+    PATH. Seeding it with Hermes's PATH would make a shell that never touches
+    PATH look like it agrees with Hermes, and would attribute Hermes's own
+    directories to the user's terminal. Starting from the system default means
+    every extra entry in the captured PATH was put there by the user's shell.
     """
     keep = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR")
     env = {name: os.environ[name] for name in keep if os.environ.get(name)}
     env.setdefault("HOME", os.path.expanduser("~"))
     env.setdefault("TERM", "xterm-256color")
-    env["PATH"] = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+    env["PATH"] = SYSTEM_DEFAULT_PATH
     return env
 
 
@@ -258,6 +288,7 @@ def login_shell_source(timeout: float = LOGIN_SHELL_TIMEOUT) -> PathSource:
             entries=(),
             available=False,
             note="Could not determine your login shell from the user database.",
+            seeded=SYSTEM_DEFAULT_PATH,
         )
     label = f"your login shell ({os.path.basename(shell)})"
     script = (
@@ -284,9 +315,10 @@ def login_shell_source(timeout: float = LOGIN_SHELL_TIMEOUT) -> PathSource:
             degraded=True,
             note=(
                 "Your shell did not answer within %.0f s (a slow startup file), so "
-                "its PATH was not read. Carrier of truth here: Hermes's own PATH."
+                "its PATH was not read. Carrier of truth here: Hermes's process PATH."
                 % timeout
             ),
+            seeded=SYSTEM_DEFAULT_PATH,
         )
     except OSError as exc:
         return PathSource(
@@ -295,6 +327,7 @@ def login_shell_source(timeout: float = LOGIN_SHELL_TIMEOUT) -> PathSource:
             entries=(),
             available=False,
             note="Could not start %s (%s)." % (shell, exc.strerror or exc),
+            seeded=SYSTEM_DEFAULT_PATH,
         )
 
     dump = parse_environment_dump(completed.stdout or b"")
@@ -308,14 +341,16 @@ def login_shell_source(timeout: float = LOGIN_SHELL_TIMEOUT) -> PathSource:
             degraded=True,
             note=(
                 "Your shell answered but printed no PATH, so its PATH was not "
-                "read. Carrier of truth here: Hermes's own PATH."
+                "read. Carrier of truth here: Hermes's process PATH."
             ),
+            seeded=SYSTEM_DEFAULT_PATH,
         )
     return PathSource(
         kind=LOGIN_SHELL_SOURCE,
         label=label,
         entries=split_path(raw),
         raw=raw,
+        seeded=SYSTEM_DEFAULT_PATH,
     )
 
 

@@ -60,10 +60,12 @@ def test_which_copy_summary_is_plain_language(tools, messy):
         {"tool": "python3", "check_login_shell": False, "include_off_path": False},
     )
     summary = payload["summary"]
-    assert summary.startswith("python3 — Hermes runs")
+    assert summary.startswith("python3 — Hermes's process PATH resolves to")
     assert "3.9.2" in summary and "3.13.1" in summary
     assert "Copies found (2)" in summary
-    assert "Hermes uses this copy" in summary
+    assert "wins in Hermes's PATH" in summary
+    # The report must not imply it measured the PATH the terminal tool builds.
+    assert "Scope: this is the PATH of the Hermes process." in summary
 
 
 def test_which_copy_without_versions_starts_no_process(tools, messy, monkeypatch):
@@ -143,7 +145,7 @@ def test_which_copy_accepts_a_supplied_path(tools, sandbox, monkeypatch):
     assert payload["mode"] == "custom-path"
     assert payload["verdict"] == "shadowed_by_older"
     assert "wins in the PATH you supplied" in payload["summary"]
-    assert "Hermes itself would run" in payload["summary"]
+    assert "Hermes's own PATH resolves to" in payload["summary"]
     assert str(hermes_python) in payload["summary"]
 
 
@@ -171,6 +173,90 @@ def test_which_copy_describes_a_missing_file(tools, messy, sandbox):
     payload = call(tools, {"tool": str(sandbox / "ghost"), "check_login_shell": False})
     assert payload["status"] == "not_found"
     assert "nothing at" in payload["message"]
+
+
+def test_path_mode_keeps_the_files_own_path(tools, messy):
+    """`path` is the file that was asked about; the PATH lives under `path_source`."""
+    payload = call(tools, {"tool": str(messy["new"]), "check_login_shell": False})
+    assert payload["path"] == str(messy["new"])
+    assert payload["path_source"]["kind"] == "hermes"
+    assert payload["path_source"]["label"] == "Hermes's process PATH"
+
+
+def test_path_mode_discloses_that_it_ran_the_file(tools, messy):
+    payload = call(tools, {"tool": str(messy["new"]), "check_login_shell": False})
+    executed = payload["executed"]
+    assert executed["command"] == [str(messy["new"]), "--version"]
+    assert executed["cwd"] == "/"
+    assert "this plugin writes nothing" in executed["note"]
+    assert "Version check: ran" in payload["summary"]
+
+
+def test_path_mode_without_versions_runs_nothing(tools, messy, monkeypatch):
+    def explode(*args, **kwargs):
+        raise AssertionError("probe must not run when probe_versions is false")
+
+    monkeypatch.setattr(tools.versions, "probe", explode)
+    payload = call(
+        tools,
+        {"tool": str(messy["new"]), "check_login_shell": False, "probe_versions": False},
+    )
+    assert payload["status"] == "ok"
+    assert payload["executed"] is None
+    assert payload["version"] is None
+    assert "Version check" not in payload["summary"]
+
+
+def test_a_supplied_path_without_versions_does_not_probe_hermes_copy(tools, sandbox, monkeypatch):
+    """`probe_versions: false` starts no probe anywhere, including the Hermes line."""
+    def explode(*args, **kwargs):
+        raise AssertionError("probe must not run when probe_versions is false")
+
+    monkeypatch.setattr(tools.versions, "probe", explode)
+    hermes_python = write_exe(sandbox / "hermes-bin" / "python3", version="3.14.9")
+    monkeypatch.setenv("PATH", str(hermes_python.parent))
+    write_exe(sandbox / "a" / "python3", version="3.9.2")
+    write_exe(sandbox / "b" / "python3", version="3.13.1")
+
+    payload = call(
+        tools,
+        {
+            "tool": "python3",
+            "path": "%s:%s" % (sandbox / "a", sandbox / "b"),
+            "probe_versions": False,
+            "check_login_shell": False,
+            "include_off_path": False,
+        },
+    )
+    assert payload["status"] == "ok"
+    assert payload["probed"] is False
+    assert "version not checked" in payload["summary"]
+
+
+def test_scan_names_the_tools_where_the_terminal_disagrees(tools, sandbox, monkeypatch):
+    """End to end, through the same trimming the handler uses."""
+    hermes_python = write_exe(sandbox / "hermes-bin" / "python3", version="3.14.9")
+    shell_python = write_exe(sandbox / "shell-bin" / "python3", version="3.15.2")
+    monkeypatch.setenv("PATH", str(hermes_python.parent))
+    monkeypatch.setattr(
+        tools.pathmodel,
+        "login_shell_source",
+        lambda *a, **k: tools.pathmodel.PathSource(
+            kind=tools.pathmodel.LOGIN_SHELL_SOURCE,
+            label="your login shell (zsh)",
+            entries=(str(shell_python.parent),),
+            raw=str(shell_python.parent),
+            seeded=tools.pathmodel.SYSTEM_DEFAULT_PATH,
+        ),
+    )
+
+    payload = scan(tools, {"tools": ["python3"], "include_off_path": False})
+
+    assert "Your terminal resolves these differently: python3" in payload["summary"]
+    entry = payload["tools"][0]
+    assert entry["terminal"]["winner"]["path_raw"] == str(shell_python)
+    assert entry["terminal"]["agrees_with_hermes"] is False
+    assert "Scope:" in payload["summary"]
 
 
 # --------------------------------------------------------------------------- #
