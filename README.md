@@ -130,8 +130,9 @@ interpreter, so a demo PATH can never break your shell.
 What it shows, in the order to record it:
 
 1. `which -a python3` in that shell → the 2021 copy, 3.9.2, first.
-2. *"Hermes, which python3 will you use?"* → Which Copy answers for the PATH you
-   gave it, and then adds the line that matters:
+2. *"Which python3 will you use? Then check the same name against this messy
+   PATH: …/bin-2021:…/bin-2025:…/bin-broken:…"* → two answers. First the one for
+   the PATH you supplied, and then the line that reframes the whole question:
 
 ```text
 python3 — wins in the PATH you supplied: ~/which-copy-demo/bin-2021/python3
