@@ -210,10 +210,10 @@ because the machine's own PATH already contains it. That distinction is the whol
 security story: a repository that tells an agent *"check this PATH for me"* cannot
 get its own script executed.
 
-The line that reframes everything is the second-to-last: Hermes's own PATH is not
-your shell's PATH. It is built when Hermes starts, which is why "which python?"
-has three different correct answers on one machine — and why the tool names the
-one it measured instead of calling it *"the PATH"*.
+The line that reframes everything is the last one: Hermes's own PATH is not your
+shell's PATH. It is built when Hermes starts, which is why "which python?" has
+three different correct answers on one machine — and why the tool names the one it
+measured instead of calling it *"the PATH"*.
 
 ## What the verdicts mean
 
