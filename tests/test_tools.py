@@ -143,10 +143,65 @@ def test_which_copy_accepts_a_supplied_path(tools, sandbox, monkeypatch):
         },
     )
     assert payload["mode"] == "custom-path"
-    assert payload["verdict"] == "shadowed_by_older"
+    # The two copies are found and ordered, but neither is run: the PATH came
+    # from the argument, so nothing in it is trusted to execute.
+    assert payload["headline"]
+    assert [copy["path_raw"] for copy in payload["copies"]] == [
+        str(old),
+        str(new),
+    ]
+    assert [copy["version"] for copy in payload["copies"]] == [None, None]
+    assert [copy["probe"] for copy in payload["copies"]] == [None, None]
+    assert all(copy["not_run"] for copy in payload["copies"])
+    assert payload["verdict"] == "multiple_copies"
     assert "wins in the PATH you supplied" in payload["summary"]
+    assert "Not run (2)" in payload["summary"]
     assert "Hermes's own PATH resolves to" in payload["summary"]
     assert str(hermes_python) in payload["summary"]
+
+
+def test_a_supplied_path_never_starts_a_probe(tools, sandbox, monkeypatch):
+    """A PATH string is read, never executed — even with probing on."""
+    def explode(*args, **kwargs):
+        raise AssertionError("a supplied PATH must never be probed")
+
+    old = write_exe(sandbox / "a" / "python3", version="3.9.2")
+    write_exe(sandbox / "b" / "python3", version="3.13.1")
+    # Hermes's own PATH has nothing to probe for this name either.
+    monkeypatch.setenv("PATH", str(sandbox / "empty-bin"))
+    monkeypatch.setattr(tools.versions, "probe", explode)
+    payload = call(
+        tools,
+        {
+            "tool": "python3",
+            "path": "%s:%s" % (old.parent, sandbox / "b"),
+            "include_off_path": False,
+            "check_login_shell": False,
+        },
+    )
+    assert payload["status"] == "ok"
+    assert payload["probed"] is True
+    assert [copy["version"] for copy in payload["copies"]] == [None, None]
+
+
+def test_a_supplied_path_is_still_probed_where_a_real_path_has_the_same_file(
+    tools, sandbox, monkeypatch
+):
+    """A copy that is also on a real PATH is not "found only" in the argument."""
+    real = write_exe(sandbox / "hermes-bin" / "python3", version="3.14.9")
+    monkeypatch.setenv("PATH", str(real.parent))
+
+    payload = call(
+        tools,
+        {
+            "tool": "python3",
+            "path": "%s:%s" % (real.parent, sandbox / "somewhere-else"),
+            "include_off_path": False,
+            "check_login_shell": False,
+        },
+    )
+    assert payload["copies"][0]["version"] == "3.14.9"
+    assert payload["copies"][0]["not_run"] is None
 
 
 def test_which_copy_rejects_an_empty_supplied_path(tools, sandbox):
@@ -177,7 +232,10 @@ def test_which_copy_describes_one_file(tools, messy):
     payload = call(tools, {"tool": str(messy["new"]), "check_login_shell": False})
     assert payload["status"] == "ok"
     assert payload["mode"] == "path"
-    assert payload["version"] == "3.13.1"
+    # Described, not executed: the version is reported as unknown here.
+    assert payload["version"] is None
+    assert payload["executed"] is None
+    assert payload["not_run"]["reason"] == "named_by_caller"
     assert payload["is_path_winner"] is False
     assert "never reached" in payload["summary"]
 
@@ -196,17 +254,23 @@ def test_path_mode_keeps_the_files_own_path(tools, messy):
     assert payload["path_source"]["label"] == "Hermes's process PATH"
 
 
-def test_path_mode_discloses_that_it_ran_the_file(tools, messy):
+def test_path_mode_never_runs_the_named_file(tools, messy, monkeypatch):
+    """The file is named in an argument, so it is described and left alone."""
+    def explode(*args, **kwargs):
+        raise AssertionError("a file named by the caller must never be executed")
+
+    monkeypatch.setattr(tools.versions, "probe", explode)
     payload = call(tools, {"tool": str(messy["new"]), "check_login_shell": False})
-    executed = payload["executed"]
-    assert executed["command"] == [str(messy["new"]), "--version"]
-    assert executed["cwd"] == "/"
-    assert "no credentials" in executed["environment"]
-    assert "this plugin writes nothing" in executed["note"]
-    assert "Version check: ran" in payload["summary"]
+    assert payload["status"] == "ok"
+    assert payload["executed"] is None
+    assert payload["version"] is None
+    assert "does not run a file you name" in payload["not_run"]["text"]
+    assert payload["not_run"]["run_it_yourself"] == "%s --version" % messy["new"]
+    assert "Version check: not run" in payload["summary"]
+    assert "never reached" in payload["summary"]
 
 
-def test_path_mode_without_versions_runs_nothing(tools, messy, monkeypatch):
+def test_path_mode_without_versions_still_says_it_did_not_run(tools, messy, monkeypatch):
     def explode(*args, **kwargs):
         raise AssertionError("probe must not run when probe_versions is false")
 
@@ -218,7 +282,7 @@ def test_path_mode_without_versions_runs_nothing(tools, messy, monkeypatch):
     assert payload["status"] == "ok"
     assert payload["executed"] is None
     assert payload["version"] is None
-    assert "Version check" not in payload["summary"]
+    assert "Version check: not run" in payload["summary"]
 
 
 def test_a_supplied_path_without_versions_does_not_probe_hermes_copy(tools, sandbox, monkeypatch):
@@ -361,10 +425,14 @@ def test_scan_can_sweep_a_supplied_path(tools, sandbox):
             "path": "%s:%s" % (sandbox / "a", sandbox / "b"),
             "tools": ["python3"],
             "include_off_path": False,
+            "check_login_shell": False,
         },
     )
     assert payload["mode"] == "custom-path"
-    assert payload["counts"]["traps"] == 1
+    assert payload["counts"]["traps"] == 0
+    assert payload["tools"][0]["winner"]["version"] is None
+    assert payload["tools"][0]["copies"] == 2
+    assert "several copies, versions not checked" in payload["summary"]
     assert "This was the PATH you supplied" in payload["summary"]
 
 
@@ -372,6 +440,94 @@ def test_scan_without_a_path(tools, monkeypatch):
     monkeypatch.setenv("PATH", "")
     payload = scan(tools, {"check_login_shell": False})
     assert payload["status"] == "no_path"
+
+
+# --------------------------------------------------------------------------- #
+# What is never executed
+#
+# A prompt injected into a repository can put any string it likes into these
+# arguments. The plugin describes what it finds and runs nothing the argument
+# put there — that is the security boundary, so it is tested as an attack.
+
+
+def _tripwire(path: Path, script: str = "3.9.2") -> Path:
+    """An executable that leaves evidence when it is run."""
+    marker = path.parent / "was-run"
+    return write_exe(
+        path,
+        body="#!/bin/sh\ntouch %s\necho 'Python %s'\n" % (marker, script),
+    )
+
+
+def test_a_directory_named_in_path_cannot_get_its_copy_executed(tools, sandbox, monkeypatch):
+    repo = sandbox / "injected-repo"
+    copy = _tripwire(repo / "python3")
+    monkeypatch.setenv("PATH", str(sandbox / "empty-bin"))
+
+    payload = call(
+        tools,
+        {
+            "tool": "python3",
+            "path": str(repo),
+            "include_off_path": False,
+            "check_login_shell": False,
+        },
+    )
+
+    assert payload["status"] == "ok"
+    # Reported, in the right order, with its origin — and not run.
+    assert payload["copies"][0]["path_raw"] == str(copy)
+    assert payload["copies"][0]["version"] is None
+    assert payload["copies"][0]["not_run"]
+    assert not (repo / "was-run").exists(), "the repository's own script was executed"
+
+
+def test_a_file_named_in_tool_cannot_get_itself_executed(tools, sandbox, monkeypatch):
+    repo = sandbox / "injected-repo"
+    file = _tripwire(repo / "setup")
+    monkeypatch.setenv("PATH", str(sandbox / "empty-bin"))
+
+    payload = call(tools, {"tool": str(file), "check_login_shell": False})
+
+    assert payload["status"] == "ok"
+    assert payload["not_run"]["reason"] == "named_by_caller"
+    assert payload["version"] is None
+    assert not (repo / "was-run").exists(), "a file named in the argument was executed"
+
+
+def test_a_relative_path_entry_is_never_probed(tools, sandbox, monkeypatch):
+    """``""`` in PATH means "wherever I am" — which can be the injected repo."""
+    repo = sandbox / "injected-repo"
+    copy = _tripwire(repo / "python3")
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("PATH", ":".join(["", "/usr/bin", "/bin"]))
+
+    payload = call(
+        tools,
+        {"tool": "python3", "check_login_shell": False, "include_off_path": False},
+    )
+
+    assert payload["copies"][0]["path_raw"] == str(copy)
+    assert payload["copies"][0]["candidate"]["relative_path_entry"] is True
+    assert payload["copies"][0]["not_run"]
+    assert "relative or empty PATH entry" in payload["copies"][0]["not_run"]
+    assert not (repo / "was-run").exists(), "a copy behind an empty PATH entry was executed"
+
+
+def test_a_fixed_install_directory_is_still_probed(tools, sandbox, monkeypatch):
+    """The other half of the rule: the usual install directories are run."""
+    off_path = write_exe(sandbox / "home" / ".local" / "bin" / "python3", version="3.12.0")
+    monkeypatch.setenv("PATH", str(sandbox / "empty-bin"))
+
+    payload = call(
+        tools,
+        {"tool": "python3", "check_login_shell": False, "include_off_path": True},
+    )
+
+    found = [copy for copy in payload["copies"] if copy["path_raw"] == str(off_path)]
+    assert found, "a copy in ~/.local/bin should be found"
+    assert found[0]["version"] == "3.12.0"
+    assert found[0]["not_run"] is None
 
 
 # --------------------------------------------------------------------------- #

@@ -64,11 +64,16 @@ Demo environment ready in $DEMO_ROOT
   bin-broken/pip3     a broken symlink    (listed in PATH, runs nothing)
   claude              0.9.1 in bin-2021, 2.0.4 in bin-2025
 
-Put it in front of your PATH with:
+To see the ordering in a shell, put the sandbox first:
 
   export PATH="$DEMO_ROOT/bin-2021:$DEMO_ROOT/bin-2025:$DEMO_ROOT/bin-broken:\$PATH"
 
-Then ask Hermes:
+Hermes keeps its own PATH — it is built when Hermes starts — so a sandbox PATH
+you paste into the chat is read, ordered and reported, and nothing in it is run
+unless that directory is already on Hermes's own PATH. Ask it anyway; the report
+says which copies it left alone and why:
 
   hermes chat -q "which python3 will you use?"
+
+  hermes chat -q "which copy wins in this PATH: $DEMO_ROOT/bin-2021:$DEMO_ROOT/bin-2025:$DEMO_ROOT/bin-broken:/usr/local/bin:/usr/bin:/bin"
 EOF

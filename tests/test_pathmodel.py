@@ -364,6 +364,67 @@ def test_hermes_source_is_labelled_as_the_process_path(pathmodel, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# What may be executed
+#
+# The security boundary lives here, so it is tested against the functions that
+# make the decision, not only through the handlers.
+
+
+def _town_exe(path, pathmodel):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+    return pathmodel.inspect(str(path), on_path=True)
+
+
+def test_probe_trust_includes_the_hermes_path(pathmodel, sandbox, monkeypatch):
+    trusted = sandbox / "hermes-bin"
+    trusted.mkdir(parents=True)
+    monkeypatch.setenv("PATH", "%s:/usr/bin:/bin" % trusted)
+    trust = pathmodel.probe_trust()
+    assert os.path.realpath(str(trusted)) in trust.directories
+    assert trust.allows(str(trusted / "python3")) is True
+
+
+def test_probe_trust_excludes_relative_and_empty_entries(pathmodel, sandbox, monkeypatch):
+    repo = sandbox / "repo"
+    repo.mkdir(parents=True)
+    monkeypatch.setenv("PATH", "%s:.:/usr/bin:/bin" % repo)
+    trust = pathmodel.probe_trust()
+    # The absolute entry counts; "." does not, because it means "wherever I am".
+    assert os.path.realpath(str(repo)) in trust.directories
+
+    monkeypatch.setenv("PATH", ":/usr/bin:/bin")  # only the empty entry
+    trust = pathmodel.probe_trust()
+    assert os.path.realpath(str(repo)) not in trust.directories
+    assert trust.allows(str(repo / "python3")) is False
+
+
+def test_probe_trust_ignores_a_directory_only_a_caller_names(pathmodel, sandbox):
+    elsewhere = sandbox / "pasted-path"
+    elsewhere.mkdir(parents=True)
+    # Building a source for it changes nothing: trust is not derived from one.
+    pathmodel.custom_source(str(elsewhere))
+    trust = pathmodel.probe_trust()
+    assert trust.allows(str(elsewhere / "python3")) is False
+
+
+def test_refusal_names_the_reason(pathmodel, sandbox, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    trust = pathmodel.probe_trust()
+
+    pasted = sandbox / "pasted"
+    assert pathmodel.refusal(_town_exe(pasted / "python3", pathmodel), trust) == pathmodel.NOT_RUN_OUTSIDE
+
+    relative_path = _town_exe(sandbox / "relrepo" / "python3", pathmodel).entry_path
+    relative = pathmodel.inspect(relative_path, directory="", on_path=True, unstable_entry=True)
+    assert pathmodel.refusal(relative, trust) == pathmodel.NOT_RUN_RELATIVE
+
+    # A directory the machine's own PATH has is fine.
+    assert trust.allows("/usr/bin/ls") is True
+
+
+# --------------------------------------------------------------------------- #
 # Display
 
 

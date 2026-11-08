@@ -1,6 +1,6 @@
 name: which-copy
 label: Which Copy
-version: 1.1.2
+version: 1.2.0
 manifest_version: 2
 author: Hazem Samak
 license: MIT
@@ -27,8 +27,14 @@ description: >-
   environment for the usual AI tools. It diagnoses and never repairs: it does not
   edit PATH, install, uninstall, relink or move anything, makes no network call,
   needs no API key, and writes no files. The only thing it executes is a bounded,
-  shell-free version probe of a copy it found (argv only, cwd=/, stripped
-  environment) that never sees your credentials; probe_versions false skips it.
+  shell-free version probe of a copy that Hermes's own PATH, your login shell's
+  PATH or a known install directory put on this machine (argv only, cwd=/,
+  stripped environment) that never sees your credentials. Nothing named in a tool
+  call is ever run: a file passed as a path, a copy found only in a PATH string
+  the call supplies, and a copy behind a relative or empty PATH entry are all
+  described with their version left unchecked, so a prompt-injected repository
+  cannot get its own script executed. probe_versions false skips probing
+  altogether.
   When something is wrong it says what and why, and leaves the fixing to you.
 requires_hermes: ">=0.22.0"
 tags: [diagnostics, path, environment, cli, macos, local, privacy, tools]

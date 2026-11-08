@@ -142,8 +142,33 @@ def expand_entry(entry: str, cwd: str) -> str:
     return os.path.normpath(expanded)
 
 
+def unstable_entry(entry: str) -> bool:
+    """A PATH entry that names no fixed directory: empty, or relative.
+
+    ``""`` and ``.`` mean "whatever directory you happen to be in", so what they
+    resolve to is decided by the working directory of the moment — which, for a
+    tool called from a chat about a repository, can be that repository. A copy
+    reached through one is reported but never executed.
+    """
+    if entry == "":
+        return True
+    return not os.path.isabs(os.path.expanduser(entry))
+
+
 def hermes_home() -> str:
-    """The active Hermes home, profile-aware, never hardcoded to ``~/.hermes``."""
+    """The active Hermes home, profile-aware, never hardcoded to ``~/.hermes``.
+
+    Hermes' own resolver is used when this runs inside Hermes, because it also
+    knows about a context-local override and the platform default. It is
+    imported lazily and tolerated missing: the plugin has to load, and be
+    testable, outside a Hermes process too.
+    """
+    try:
+        from hermes_constants import get_hermes_home  # type: ignore[import-not-found]
+
+        return os.path.abspath(os.path.expanduser(str(get_hermes_home())))
+    except Exception:  # noqa: BLE001 - no Hermes internals, no problem
+        pass
     configured = os.environ.get("HERMES_HOME")
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
@@ -379,6 +404,9 @@ class Candidate:
     inode: int | None = None
     size: int | None = None
     error: str = ""
+    #: True when the PATH entry this came from was empty or relative, so the
+    #: directory it names is decided by the caller's working directory.
+    unstable_entry: bool = False
 
     @property
     def kind_label(self) -> str:
@@ -402,6 +430,8 @@ class Candidate:
         if self.slot is not None:
             payload["path_slot"] = self.slot
             payload["path_directory"] = _tidy(self.directory, home)
+        if self.unstable_entry:
+            payload["relative_path_entry"] = True
         if self.extra_root:
             payload["extra_root"] = _tidy(self.extra_root, home)
         if len(self.chain) > 1:
@@ -441,6 +471,7 @@ def inspect(
     directory: str = "",
     on_path: bool = True,
     extra_root: str | None = None,
+    unstable_entry: bool = False,
 ) -> Candidate | None:
     """Inspect one path. ``None`` means nothing is there at all."""
     try:
@@ -456,6 +487,7 @@ def inspect(
             directory=directory,
             on_path=on_path,
             extra_root=extra_root,
+            unstable_entry=unstable_entry,
             error=exc.strerror or str(exc),
         )
 
@@ -479,6 +511,7 @@ def inspect(
                 directory=directory,
                 on_path=on_path,
                 extra_root=extra_root,
+                unstable_entry=unstable_entry,
                 chain=symlink_chain(entry_path),
                 error=exc.strerror or str(exc),
             )
@@ -519,6 +552,7 @@ def inspect(
         chain=symlink_chain(entry_path) if is_link else (entry_path,),
         inode=inode,
         size=size,
+        unstable_entry=unstable_entry,
     )
 
 
@@ -543,7 +577,12 @@ def candidates_on_path(
         if key in seen:
             continue
         seen.add(key)
-        candidate = inspect(entry_path, slot=slot, directory=raw_entry)
+        candidate = inspect(
+            entry_path,
+            slot=slot,
+            directory=raw_entry,
+            unstable_entry=unstable_entry(raw_entry),
+        )
         if candidate is not None:
             found.append(candidate)
     return found
@@ -643,6 +682,104 @@ def candidates_off_path(
         if candidate is not None and candidate.is_live:
             found.append(candidate)
     return found
+
+
+# --------------------------------------------------------------------------- #
+# What this check is allowed to execute
+
+
+#: Why a copy was described but never run. Each string finishes the sentence
+#: "not run: …" in a report, so it is written for a person, not a log.
+NOT_RUN_NAMED = "this check does not run a file you name"
+NOT_RUN_OUTSIDE = (
+    "it is not in a directory this check runs files from — Hermes's PATH, your "
+    "login shell's PATH, or a known install directory"
+)
+NOT_RUN_RELATIVE = (
+    "it sits in a relative or empty PATH entry, which resolves against whatever "
+    "directory you happen to be in"
+)
+
+
+@dataclass(frozen=True)
+class ProbeTrust:
+    """The directories this check may execute a copy from.
+
+    Built from the machine's own configuration — the PATH of the Hermes process,
+    the PATH the user's login shell builds, and the fixed install directories —
+    and **never** from an argument. That is the whole defense: a prompt-injected
+    repository can ask for a path, or pass a PATH string, but it cannot change
+    the PATH the user's own shell and Hermes were started with, so it cannot get
+    a file of its choosing executed. Files it names are still described.
+
+    A copy is run only when the directory that holds it is one of these; the
+    comparison is on the resolved directory, so a PATH entry that is itself a
+    symlink is judged by the directory it really names. The entry's own target is
+    not part of the test: a symlinked copy in a trusted directory is exactly what
+    a shell would reach, which is the thing this plugin exists to report.
+    """
+
+    directories: tuple[str, ...] = ()
+
+    def allows(self, entry_path: str) -> bool:
+        """May the copy at ``entry_path`` be executed?"""
+        if not entry_path:
+            return False
+        directory = os.path.dirname(os.path.abspath(entry_path))
+        try:
+            resolved = os.path.realpath(directory)
+        except OSError:  # pragma: no cover - realpath only fails pathologically
+            return False
+        return resolved in self.directories
+
+
+def probe_trust(
+    *,
+    shell: PathSource | None = None,
+    home: str | None = None,
+    hermes: str | None = None,
+) -> ProbeTrust:
+    """Assemble the executable-by-this-check directories for one call.
+
+    ``shell`` is the login-shell source when the call read one; the Hermes
+    process PATH and the fixed install roots are always included. Nothing a
+    caller passed in as an argument takes part.
+    """
+    directories: list[str] = []
+    seen: set[str] = set()
+
+    def add(raw: str) -> None:
+        # An empty or relative entry names no fixed directory: it must not make
+        # today's working directory executable.
+        if not raw or unstable_entry(raw):
+            return
+        expanded = os.path.normpath(os.path.abspath(os.path.expanduser(raw)))
+        try:
+            resolved = os.path.realpath(expanded)
+        except OSError:  # pragma: no cover - realpath only fails pathologically
+            return
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        directories.append(resolved)
+
+    for source in (hermes_source(), shell):
+        if source is None or not source.available:
+            continue
+        for entry in source.entries:
+            add(entry)
+    for root in extra_roots(home=home, hermes=hermes):
+        add(root)
+    return ProbeTrust(directories=tuple(directories))
+
+
+def refusal(candidate: Candidate, trust: ProbeTrust) -> str:
+    """Why this copy must not be executed — ``""`` when it may be."""
+    if candidate.unstable_entry:
+        return NOT_RUN_RELATIVE
+    if not trust.allows(candidate.entry_path):
+        return NOT_RUN_OUTSIDE
+    return ""
 
 
 # --------------------------------------------------------------------------- #

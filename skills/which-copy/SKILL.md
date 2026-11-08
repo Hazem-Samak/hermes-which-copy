@@ -1,7 +1,7 @@
 ---
 name: which-copy
 description: "Report which copy of a command Hermes runs, without overstating it."
-version: 1.1.2
+version: 1.2.0
 author: Hazem Samak
 license: MIT
 platforms: [macos, linux]
@@ -38,7 +38,8 @@ add one useful sentence — not to rewrite it.
   user's startup files, so the entries are theirs; the report says so.
 - **"In the PATH you gave me, X wins"** — when the call passed `path`. Never
   slide from that into claiming it is what Hermes uses; the report says
-  otherwise in its own last lines.
+  otherwise in its own last lines. And if the copies there came back "version not
+  checked", say that: a pasted PATH is read, never run.
 - **"An older copy is shadowing a newer one"** — only when `verdict` is
   `shadowed_by_older`. The report refuses to order versions that were never
   meant to be compared, and so should you.
@@ -54,8 +55,14 @@ add one useful sentence — not to rewrite it.
 - **Never say you fixed, cleaned, or repaired PATH.** These tools only read. They
   do not move, relink, install, uninstall or unset anything, and claiming
   otherwise makes the user think a problem is gone when it is not.
+- **Never say a file was run when it was not.** A path passed as `tool`, and a
+  copy found only in a `path` string, are described and **not executed** — the
+  JSON carries a `not_run` reason and the summary has a "Not run" line. Keep that
+  line. If the person wants the version of the file they named, tell them the
+  command to run themselves (the report prints it); do not imply the tool did it.
 - **Never invent a version.** If `version` is null, say the copy did not report
-  one; do not guess from the file name.
+  one; do not guess from the file name. "version not checked" and "not run" are
+  answers, not gaps to fill in.
 - **Never treat "Hermes-managed" as a fault.** Hermes ships its own Python, Node
   and ripgrep on purpose. It is context, not damage.
 - **Never paste the whole JSON** unless asked for it. The summary is for the
@@ -78,7 +85,16 @@ rebuilds its own PATH at startup.
 | "what about this PATH from my cron job / script?" | `which_copy` with `tool` and `path` |
 | "is this specific file the one that runs?" | `which_copy` with an absolute path as `tool` |
 
-If the person names an absolute path, the tool will execute that file with its
-version flag (`probe_versions` on by default). The report's `executed` field and
-its "Version check: ran …" line say so — keep that line, and mention it if the
-person did not expect their file to be run.
+Two of those are read-only answers, and it matters which:
+
+- **An absolute path as `tool`** is described and **never executed** — the report
+  says "Version check: not run" and prints the command the person can run
+  themselves. Say that plainly if they asked for a version: they get the facts
+  about the file, and the command, not a version you made the tool fetch.
+- **A `path` you pass in** is read, not run. Copies that exist only there come
+  back "version not checked"; copies that the machine's own PATHs already reach
+  still report their versions. Do not present the missing versions as a failure —
+  it is the boundary that stops a prompt-injected repository from getting its own
+  script executed. If the person wants the versions, the honest next step is to
+  put that directory on their own PATH and ask again, or to run the copy
+  themselves.

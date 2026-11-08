@@ -69,12 +69,21 @@ def _looks_like_path(text: str) -> bool:
     return on_windows
 
 
-def _finding(candidate: pathmodel.Candidate) -> verdicts.Finding:
+def _finding(candidate: pathmodel.Candidate, trust: pathmodel.ProbeTrust) -> verdicts.Finding:
     origin = origin_module.classify(candidate.entry_path, candidate.canonical)
     arch = "unknown"
     if candidate.is_live:
         arch = origin_module.binary_arch(candidate.canonical or candidate.entry_path)
-    return verdicts.Finding(candidate=candidate, origin=origin, probe=None, arch=arch)
+    # A copy this check will not execute says so from the start, so no later
+    # stage can decide to run it by accident.
+    not_run = pathmodel.refusal(candidate, trust) if candidate.is_live else ""
+    return verdicts.Finding(candidate=candidate, origin=origin, probe=None, arch=arch, not_run=not_run)
+
+
+def _probeable(findings: Sequence[verdicts.Finding], limit: int | None = None) -> list[verdicts.Finding]:
+    """The copies in ``findings`` this check is allowed to execute."""
+    chosen = [item for item in findings if item.candidate.is_live and not item.not_run]
+    return chosen[:limit] if limit is not None else chosen
 
 
 def _probe_all(
@@ -137,14 +146,17 @@ def _collect(
     source: PathSource,
     *,
     include_off_path: bool,
+    trust: pathmodel.ProbeTrust,
     roots: Sequence[str] | None = None,
 ) -> tuple[list[verdicts.Finding], list[verdicts.Finding]]:
-    on_path = [_finding(candidate) for candidate in pathmodel.candidates_on_path(tool, source)]
+    on_path = [
+        _finding(candidate, trust) for candidate in pathmodel.candidates_on_path(tool, source)
+    ]
     off_path: list[verdicts.Finding] = []
     if include_off_path:
         searched = roots if roots is not None else pathmodel.extra_roots()
         off_path = [
-            _finding(candidate)
+            _finding(candidate, trust)
             for candidate in pathmodel.candidates_off_path(
                 tool,
                 searched,
@@ -173,16 +185,15 @@ def _probe_report(
         )
 
     targets: list[tuple[str, str, str]] = []
-    for item in on_path:
-        if item.candidate.is_live:
-            targets.append((item.candidate.entry_path, tool, source.raw))
-    for item in off_path[:4]:
+    for item in _probeable(on_path):
+        targets.append((item.candidate.entry_path, tool, source.raw))
+    for item in _probeable(off_path, 4):
         targets.append((item.candidate.entry_path, tool, source.raw))
     if login_findings:
         shell_path = shell.raw if shell is not None else source.raw
-        live = verdicts.first_live(login_findings)
-        if live is not None:
-            targets.append((live.candidate.entry_path, tool, shell_path))
+        live = _probeable(login_findings)
+        if live:
+            targets.append((live[0].candidate.entry_path, tool, shell_path))
 
     probes = _probe_all(targets, budget=budget, per_probe=per_probe)
     return _analyze(
@@ -202,11 +213,20 @@ def _swap(
     probes: dict[tuple[str, str], Probe],
     tool: str,
 ) -> list[verdicts.Finding]:
-    """Attach the probe for each copy, leaving unprobed copies without one."""
+    """Attach the probe for each copy, leaving unprobed copies without one.
+
+    A copy that carries a probe was, by definition, run — so it loses any
+    "not run" mark it was given. (That happens when a relative PATH entry and a
+    trusted one resolve to the same file: the file is run because the trusted
+    directory has it, and saying otherwise would contradict the version shown.)
+    """
     result: list[verdicts.Finding] = []
     for finding in findings:
         probe = probes.get((finding.candidate.entry_path, tool))
-        result.append(dataclasses.replace(finding, probe=probe) if probe else finding)
+        if probe:
+            result.append(dataclasses.replace(finding, probe=probe, not_run=""))
+        else:
+            result.append(finding)
     return result
 
 
@@ -250,8 +270,7 @@ def which_copy(args: dict = None, **kwargs) -> str:
         include_off_path = _flag(args, "include_off_path", True)
 
         if _looks_like_path(raw_name):
-            return _path_mode(raw_name, started=started, probe_versions=probe_versions,
-                              check_shell=check_shell)
+            return _path_mode(raw_name, started=started, check_shell=check_shell)
 
         custom_path = str(args.get("path") or "").strip()
         if custom_path:
@@ -262,13 +281,19 @@ def which_copy(args: dict = None, **kwargs) -> str:
         if not source.available:
             return _fail("no_path", source.note, tool=raw_name)
 
-        on_path, off_path = _collect(raw_name, source, include_off_path=include_off_path)
+        trust = pathmodel.probe_trust(
+            shell=shell if shell is not None and shell.available else None
+        )
+        on_path, off_path = _collect(
+            raw_name, source, include_off_path=include_off_path, trust=trust
+        )
         login_findings: list[verdicts.Finding] = []
         login_source: PathSource | None = None
         if shell is not None and shell.available:
             login_source = shell
             login_findings = [
-                _finding(candidate) for candidate in pathmodel.candidates_on_path(raw_name, shell)
+                _finding(candidate, trust)
+                for candidate in pathmodel.candidates_on_path(raw_name, shell)
             ]
 
         report = _probe_report(
@@ -323,8 +348,10 @@ def _hermes_truth(tool: str, probe_versions: bool = True) -> str:
             "has no %s." % tool
         )
     winner = live[0]
-    if not probe_versions:
-        # probe_versions: false means no process is started, for this line too.
+    trust = pathmodel.probe_trust()
+    if not probe_versions or not trust.allows(winner.entry_path):
+        # probe_versions: false means no process is started, for this line too;
+        # and a copy this check will not execute gets no version either.
         return (
             "Separately: this is not the PATH Hermes's process runs with. For %s, Hermes's own "
             "PATH resolves to %s (version not checked)." % (tool, pathmodel.tidy(winner.entry_path))
@@ -342,13 +369,16 @@ def _hermes_truth(tool: str, probe_versions: bool = True) -> str:
     )
 
 
-def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_shell: bool) -> str:
+def _path_mode(raw_path: str, *, started: float, check_shell: bool) -> str:
     """``which_copy("/usr/bin/python3")`` — facts about one file on disk.
 
-    The file is named by the caller, so it is the one case where the plugin can
-    be pointed at something that is not a known tool. It is executed (with its
-    version flag) only when ``probe_versions`` is true, and the report says
-    plainly that it ran, with the exact argv.
+    The file is named by the caller, so nothing about it is trusted: a prompt
+    injected into a repository can put any string here, and a diagnostic tool is
+    not a reason to execute it. Every fact below is read from the filesystem —
+    what the name points at, what it came from, what CPU it is built for, and
+    whether Hermes would pick it — and the file itself is never run. The report
+    says so, with the command the person can run themselves if they want its
+    version, so ``probe_versions`` has nothing to switch off here.
     """
     expanded = os.path.abspath(os.path.expanduser(raw_path))
     name = os.path.basename(expanded)
@@ -363,29 +393,29 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
             path=expanded,
         )
 
-    finding = _finding(candidate)
-    executed = None
-    if probe_versions and candidate.is_live:
-        probe = versions.probe(
-            candidate.entry_path,
-            tool=name,
-            timeout=SINGLE_PROBE_TIMEOUT_S,
-            path_value=os.environ.get("PATH", ""),
-        )
-        finding = dataclasses.replace(finding, probe=probe)
-        executed = {
-            "command": [candidate.entry_path, *probe.argv],
-            "cwd": "/",
-            "environment": "stripped: PATH, HOME, a locale, TERM=dumb and color/pager settings; no credentials",
+    source, shell = _sources(check_shell)
+    trust = pathmodel.probe_trust(
+        shell=shell if shell is not None and shell.available else None
+    )
+    finding = _finding(candidate, trust)
+    not_run = None
+    if candidate.is_live:
+        # Named by the caller, so it is never executed — regardless of where it
+        # lives and regardless of probe_versions.
+        finding = dataclasses.replace(finding, not_run=pathmodel.NOT_RUN_NAMED)
+        not_run = {
+            "reason": "named_by_caller",
+            "text": pathmodel.NOT_RUN_NAMED,
+            "run_it_yourself": "%s --version" % expanded,
             "note": (
-                "The file you named was executed to ask it its version. Anything it writes "
-                "is its own doing; this plugin writes nothing."
+                "Nothing at this path was executed. Naming a file is not a request to "
+                "run it, so the version is unknown here; the command above asks it "
+                "yourself, in your own shell."
             ),
         }
 
-    source, shell = _sources(check_shell)
     on_path = [
-        _finding(item) for item in pathmodel.candidates_on_path(name, source)
+        _finding(item, trust) for item in pathmodel.candidates_on_path(name, source)
     ] if source.available else []
     winning = next((item for item in on_path if item.candidate.is_live), None)
 
@@ -405,7 +435,7 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
         " · ".join(
             part
             for part in (
-                finding.version or "version unknown",
+                finding.version or "version not checked",
                 finding.origin.label,
                 "architecture: %s" % finding.arch,
             )
@@ -426,11 +456,11 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
     elif winning is None:
         lines.append("")
         lines.append("No copy of %s is on Hermes's process PATH at all." % name)
-    if executed:
+    if not_run:
         lines.append("")
         lines.append(
-            "Version check: ran %s (3-second limit, cwd=/, stripped environment)."
-            % " ".join(executed["command"])
+            "Version check: not run — %s. To ask it yourself: %s"
+            % (pathmodel.NOT_RUN_NAMED, not_run["run_it_yourself"])
         )
 
     payload = {
@@ -454,7 +484,10 @@ def _path_mode(raw_path: str, *, started: float, probe_versions: bool, check_she
         "origin": finding.origin.as_dict(),
         "arch": finding.arch,
         "is_path_winner": is_winner,
-        "executed": executed,
+        # Nothing here was executed: a path named in an argument is described,
+        # never run. `probe_versions` does not change that.
+        "executed": None,
+        "not_run": not_run,
         "path_winner": verdicts._finding_dict(winning),
         "elapsed_ms": int((time.monotonic() - started) * 1000),
     }
@@ -507,12 +540,15 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
         if not source.available:
             return _fail("no_path", source.note)
 
+        trust = pathmodel.probe_trust(
+            shell=shell if shell is not None and shell.available else None
+        )
         roots = pathmodel.extra_roots() if include_off_path else []
 
         collected: list[tuple[str, list[verdicts.Finding], list[verdicts.Finding]]] = []
         for name in names:
             on_path, off_path = _collect(
-                name, source, include_off_path=include_off_path, roots=roots
+                name, source, include_off_path=include_off_path, roots=roots, trust=trust
             )
             collected.append((name, on_path, off_path))
 
@@ -522,7 +558,7 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
             login_source = shell
             for name in names:
                 login_map[name] = [
-                    _finding(candidate)
+                    _finding(candidate, trust)
                     for candidate in pathmodel.candidates_on_path(name, shell)
                 ]
 
@@ -530,14 +566,13 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
         if probe_versions:
             targets: list[tuple[str, str, str]] = []
             for name, on_path, off_path in collected:
-                live = [item for item in on_path if item.candidate.is_live]
-                for item in live[:MAX_PROBES_PER_TOOL]:
+                for item in _probeable(on_path, MAX_PROBES_PER_TOOL):
                     targets.append((item.candidate.entry_path, name, source.raw))
-                for item in off_path[:1]:
+                for item in _probeable(off_path, 1):
                     targets.append((item.candidate.entry_path, name, source.raw))
-                login_live = verdicts.first_live(login_map.get(name, []))
-                if login_live is not None and login_source is not None:
-                    targets.append((login_live.candidate.entry_path, name, login_source.raw))
+                login_live = _probeable(login_map.get(name, []))
+                if login_live and login_source is not None:
+                    targets.append((login_live[0].candidate.entry_path, name, login_source.raw))
             threshold = MAX_PROBES_PER_SCAN
             probes = _probe_all(
                 targets[:threshold],

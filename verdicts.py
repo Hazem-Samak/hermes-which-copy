@@ -86,6 +86,10 @@ class Finding:
     origin: origin_module.Origin
     probe: Probe | None = None
     arch: str = "unknown"
+    #: Set when this copy is deliberately never executed (it was named by the
+    #: caller, found only in a PATH the caller supplied, or sits behind a
+    #: relative PATH entry). The string is the reason, shown to the reader.
+    not_run: str = ""
 
     @property
     def version(self) -> str | None:
@@ -126,6 +130,8 @@ def _copy_line(
         bits.append(finding.version)
     elif finding.probe is not None and finding.probe.error:
         bits.append("no version (%s)" % finding.probe.error_hint)
+    elif finding.not_run:
+        bits.append("version not checked")
     bits.append(finding.origin.label)
     if bits:
         line += " — " + " · ".join(bits)
@@ -291,20 +297,25 @@ def analyze(
     newer: list[Finding] = []
     older: list[Finding] = []
     uncomparable: list[str] = []
+    winner_unknown: list[Finding] = []
     unasked: list[Finding] = []
+    refused: list[Finding] = []
     silent: list[Finding] = []
     for other in others:
         if other.probe is None:
-            # Never asked (the sweep caps how many copies it probes). That is
-            # "not checked", not "no version" and certainly not "the same".
-            unasked.append(other)
+            # Never asked: either this check does not execute that copy at all
+            # (``not_run``), or the sweep ran out of probe budget. Neither is
+            # "no version", and neither is "the same as the winner".
+            (refused if other.not_run else unasked).append(other)
             continue
         if not other.version:
             # Asked, and it said nothing usable.
             silent.append(other)
             continue
         if not winner.version:
-            uncomparable.append(pathmodel.tidy(other.candidate.entry_path))
+            # Nothing to compare against. That is not "these cannot be ordered":
+            # the winner's version was never established in the first place.
+            winner_unknown.append(other)
             continue
         relation = compare_versions(winner.version, other.version)
         if relation is None:
@@ -357,22 +368,28 @@ def analyze(
                     listing,
                 )
             )
-        elif uncomparable or silent or unasked:
+        elif uncomparable or silent or unasked or refused or winner_unknown:
             # Only claim what was measured. A copy nobody asked, or one that
             # printed nothing, is not evidence that it matches the winner.
             reasons = []
             if uncomparable:
                 reasons.append("their version numbers cannot be ordered against each other")
+            if winner_unknown:
+                reasons.append("the winning copy has no version")
             if silent:
-                reasons.append("%d of them reported no version at all" % len(silent))
+                reasons.append("%d reported no version" % len(silent))
             if unasked:
-                reasons.append("%d of them were not asked for their version" % len(unasked))
+                reasons.append(
+                    "%d %s not asked for a version" % (len(unasked), "was" if len(unasked) == 1 else "were")
+                )
+            if refused:
+                reasons.append("%d %s not run" % (len(refused), "was" if len(refused) == 1 else "were"))
             verdicts.append(
                 Verdict(
                     "multiple_copies",
                     "warning",
-                    "There are %d separate copies of %s, and %s, so I will not claim they "
-                    "are the same version." % (distinct, tool, " and ".join(reasons)),
+                    "There are %d separate copies of %s, and nothing here establishes that they "
+                    "are the same version: %s." % (distinct, tool, "; ".join(reasons)),
                     listing,
                 )
             )
@@ -640,6 +657,16 @@ def _finish(
         lines.extend("  " + line for line in copies)
         lines.append("")
 
+    not_run = [finding for finding in emitted if finding.not_run]
+    if not_run:
+        lines.append("")
+        lines.append(
+            "Not run (%d): a copy is executed only when Hermes's PATH, your login shell's "
+            "PATH or a known install directory put it there. A file you name, a copy found "
+            "only in a PATH you pass in, and a copy behind a relative PATH entry are "
+            "described here and left alone." % len(not_run)
+        )
+
     if repeated_slots:
         lines.append("")
         lines.append(
@@ -760,7 +787,7 @@ def _headline(tool: str, primary: Verdict, winner: Finding | None, newer: Sequen
     if winner is None:
         return "%s: nothing usable on PATH." % tool
     where = pathmodel.tidy(winner.candidate.entry_path)
-    version = winner.version or "version unknown"
+    version = winner.version or ("version not checked" if winner.not_run else "version unknown")
     if primary.code == "shadowed_by_older":
         if newer:
             return "%s: an older copy (%s) wins over %s." % (tool, version, newer[0])
@@ -798,6 +825,7 @@ def _finding_dict(finding: Finding | None) -> dict | None:
         "path_slot": finding.candidate.slot,
         "candidate": finding.candidate.as_dict(),
         "probe": finding.probe.as_dict() if finding.probe else None,
+        "not_run": finding.not_run or None,
     }
 
 
@@ -965,9 +993,11 @@ def _scan_note(report: dict) -> str:
         text = codes["multiple_copies"].get("text", "")
         if "cannot be ordered" in text:
             return "several copies, versions cannot be ordered"
-        if "reported no version" in text:
+        if "not run" in text:
+            return "several copies, versions not checked"
+        if "no version" in text:
             return "several copies, some report no version"
-        if "were not asked" in text:
+        if "not asked" in text:
             return "several copies, some not probed"
         if "none of the others is newer" in text:
             return "several copies, newest wins"

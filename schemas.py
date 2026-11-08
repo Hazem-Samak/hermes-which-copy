@@ -32,8 +32,12 @@ WHICH_COPY = {
         "it were an older version, or when something is installed but seems "
         "ignored. It only diagnoses: it never edits PATH, never installs, "
         "uninstalls or moves anything, and writes no files. Its only execution is "
-        "a bounded version probe of a copy it found (argv only, cwd=/, stripped "
-        "environment); probe_versions false skips that. Returns JSON whose "
+        "a bounded version probe of a copy that this machine's own PATH, your "
+        "login shell's PATH or a known install directory put there (argv only, "
+        "cwd=/, stripped environment). Nothing named in an argument is executed: a "
+        "file you pass as a path, and a copy that exists only in a PATH string you "
+        "pass in, are described with their version left unchecked. probe_versions "
+        "false skips every probe. Returns JSON whose "
         "'summary' field is a plain-language report — show that to the user "
         "verbatim inside a fenced code block, then add one or two sentences at most."
     ),
@@ -47,9 +51,9 @@ WHICH_COPY = {
                     '"python3", "node", "claude", "codex". Also accepts an absolute '
                     'path such as "/usr/bin/python3" to describe one specific file '
                     "and whether it is the copy the Hermes process would resolve. A "
-                    "path you name is executed with its version flag when "
-                    "probe_versions is true (the default), and the report says so "
-                    "and shows the exact command."
+                    "file you name is never executed — naming a file is not approval "
+                    "to run it — so its version comes back as not checked, with the "
+                    "command the person can run themselves."
                 ),
             },
             "check_login_shell": {
@@ -68,9 +72,12 @@ WHICH_COPY = {
                 "description": (
                     "Ask each copy for its version by running it with --version, "
                     "with a 3-second limit, no shell and a stripped environment. "
-                    "Default true. Set false to skip every version probe. That is "
-                    "not by itself a process-free call: the login-shell check is on "
-                    "by default and still starts your shell, so set "
+                    "Default true. Only copies that this machine's own PATH, your "
+                    "login shell's PATH or a known install directory put there are "
+                    "run — a file you name and a copy found only in a PATH you pass "
+                    "in are never executed. Set false to skip every version probe. "
+                    "That is not by itself a process-free call: the login-shell "
+                    "check is on by default and still starts your shell, so set "
                     "check_login_shell false as well for an answer that starts no "
                     "process at all."
                 ),
@@ -89,8 +96,11 @@ WHICH_COPY = {
                 "description": (
                     "Optional. Check this PATH string instead of Hermes's own — a "
                     "script's PATH, a cron job's, a colleague's paste, or a demo "
-                    "setup. The report says plainly that it is the PATH supplied and "
-                    "still states what the Hermes process would resolve for that "
+                    "setup. It is read, never run: copies found only in the PATH you "
+                    "pass in are reported with their version not checked, because a "
+                    "PATH in a tool call is not a reason to execute what it "
+                    "contains. The report says plainly that it is the PATH supplied "
+                    "and still states what the Hermes process would resolve for that "
                     "name. Leave it out to answer the real question."
                 ),
             },
@@ -117,7 +127,10 @@ WHICH_COPY_SCAN = {
         "the tools where a terminal would resolve a different copy. Local, no "
         "network, no API key, no installs, no changes to PATH. It writes no files; "
         "its only execution is a bounded version probe per copy (argv only, cwd=/, "
-        "stripped environment), skipped entirely with probe_versions false. Hermes's "
+        "stripped environment), and only for copies that the machine's own PATH, "
+        "the login shell's PATH or a known install directory put there — a PATH you "
+        "pass in is read, never run. Probing is skipped entirely with "
+        "probe_versions false. Hermes's "
         "terminal tool runs commands in a login shell whose PATH also gains "
         "directories Hermes adds, so a command run there can resolve a different "
         "copy than the one named here. Use it when the user asks to 'check my "
@@ -170,8 +183,10 @@ WHICH_COPY_SCAN = {
                 "type": "string",
                 "description": (
                     "Optional. Sweep this PATH string instead of Hermes's own (a "
-                    "script's, a cron job's, or a demo setup). The report says which "
-                    "PATH it inspected, and that it is not the one Hermes runs with."
+                    "script's, a cron job's, or a demo setup). It is read, never run: "
+                    "copies found only in it are reported without a version probe. "
+                    "The report says which PATH it inspected, and that it is not the "
+                    "one Hermes runs with."
                 ),
             },
         },

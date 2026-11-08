@@ -191,7 +191,30 @@ def test_schema_probe_versions_description_mentions_the_login_shell(plugin):
     assert "no process started at all" not in description
 
 
-def test_schema_says_a_named_path_is_executed(plugin):
+def test_schema_says_a_named_path_is_not_executed(plugin):
+    """The model has to know that naming a file does not run it."""
     description = plugin.schemas.WHICH_COPY["parameters"]["properties"]["tool"]["description"]
-    assert "probe_versions" in description
-    assert "executed" in description
+    assert "never executed" in description or "not executed" in description
+    assert "executed with its version flag" not in description
+
+
+def test_schema_says_a_supplied_path_is_not_executed(plugin):
+    for schema in (plugin.schemas.WHICH_COPY, plugin.schemas.WHICH_COPY_SCAN):
+        description = schema["parameters"]["properties"]["path"]["description"]
+        assert "never run" in description or "not run" in description
+
+
+def test_manifest_description_does_not_claim_named_files_are_run(plugin):
+    """Requirement from the review: the manifest must describe the new behaviour."""
+    manifest = (ROOT / "plugin.yaml").read_text()
+    assert "copy it found (argv only" not in manifest
+    assert "Nothing named in a tool" in manifest
+    assert "prompt-injected repository" in manifest
+
+
+def test_readme_says_nothing_named_in_an_argument_is_executed():
+    readme = (ROOT / "README.md").read_text().lower()
+    assert "nothing named in a tool call is ever run" in readme
+    assert "including a file you name yourself" not in readme
+    assert "a path named by the caller is executed" not in readme
+    assert "executed with its version flag" not in readme

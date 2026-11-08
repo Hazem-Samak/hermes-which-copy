@@ -14,8 +14,12 @@ front, or Hermes preferring its own bundle over yours.
 
 It only **diagnoses**. Nothing is installed, moved, relinked, or edited; PATH is
 never touched; it writes no files and makes no network call. The one thing it
-executes is a bounded version check of a copy it found (or a file you named
-yourself) — see [Safety](#safety-and-privacy) for exactly what that means.
+executes is a bounded version check of a copy that **this machine** put there —
+Hermes's own PATH, your login shell's PATH, or a known install directory.
+Nothing named in a tool call is ever run: a file you name, a copy that exists
+only in a PATH string you pass in, and a copy behind a relative PATH entry are
+all described with their version left unchecked. See
+[Safety](#safety-and-privacy) — a prompt-injected repository is the reason.
 
 ---
 
@@ -60,7 +64,7 @@ Copies found (6):
   5. ~/.local/share/uv/tools/skill-lens-cli/bin/python3 — 3.12.14 · a uv tool environment (skill-lens-cli)  ← off PATH entirely
   6. ~/.local/share/uv/tools/trafilatura/bin/python3 — 3.14.7 · a uv tool environment (trafilatura)  ← off PATH entirely
 
-PATH lists 5 directories more than once — only the first position counts.
+PATH lists 3 directories more than once — only the first position counts.
 In your login shell (zsh): python3 → /opt/homebrew/bin/python3 (3.15.2).
 That shell was started with the system default PATH (/usr/bin:/bin:/usr/sbin:/sbin) before its own startup files ran, so the entries above are the shell's doing.
 
@@ -139,62 +143,77 @@ Then just ask:
 | `which_copy(tool)` | One name. The winning copy on the Hermes process PATH, its version and origin, every other copy found (on and off PATH), and a verdict. Also accepts an absolute path to describe one file. |
 | `which_copy_scan(tools?)` | The usual AI tools — `python3`, `python`, `node`, `npm`, `npx`, `bun`, `pnpm`, `uv`, `pip3`, `pipx`, `git`, `gh`, `brew`, `hermes`, `claude`, `codex`, `opencode`, `gemini`, `grok`, `aider`, `cursor-agent`, `rustc`, `go`, `ruby`, `java` — or any list you pass. One line per tool, worst first. |
 
-Neither installs, moves or edits anything. `probe_versions: false` starts no
-version check at all; because the login-shell check is on by default and does
+Neither installs, moves or edits anything, and neither runs a file you name.
+`probe_versions: false` starts no version check at all; because the login-shell
+check is on by default and does
 start your shell, set `check_login_shell: false` as well for a call that starts
 no process whatsoever.
 
 ## The 90-second demo
 
-A deliberately messy PATH: three copies of `python3`, oldest first, two of
-`claude`, and a broken `pip3` symlink in front of everything.
+The strongest demo is the machine you are already on: ask *"which python3 will
+you use?"* and you get the report above. To make the shadowing case reproducible
+on a machine that has only one of everything, the repository ships a
+deliberately messy PATH: three copies of `python3` oldest first, two of `claude`,
+and a broken `pip3` symlink in front of everything.
 
 ```bash
 git clone https://github.com/Hazem-Samak/hermes-which-copy
 cd hermes-which-copy
-bash demo/run-demo.sh
+bash demo/setup.sh        # builds ~/which-copy-demo, prints its PATH
 ```
 
 `demo/setup.sh` writes the mess to `~/which-copy-demo` (nothing else on the
-machine is touched) and `run-demo.sh` asks Hermes the question. Both scripts
-share `demo/guard.sh`, which refuses to delete `/`, your home directory, this
-repository, or any non-empty directory that is not the demo — a typo in
-`DEMO_ROOT` cannot turn the demo into data loss. The stubs in the demo only lie
-about `--version`; every other argument is handed to the real interpreter, so a
-demo PATH can never break your shell.
+machine is touched). Both scripts share `demo/guard.sh`, which refuses to delete
+`/`, your home directory, this repository, or any non-empty directory that is not
+the demo — a typo in `DEMO_ROOT` cannot turn the demo into data loss. The stubs in
+the demo only lie about `--version`; every other argument is handed to the real
+interpreter.
 
 What it shows, in the order to record it:
 
-1. `which -a python3` in that shell → the 2021 copy, 3.9.2, first.
-2. *"Which python3 will you use? Then check the same name against this messy
-   PATH: …/bin-2021:…/bin-2025:…/bin-broken:…/"* → two answers. First the one for
-   the PATH you supplied, and then the line that reframes the whole question:
+1. *"Which python3 will you use?"* → the report above: Hermes's own 3.14.9, the
+   newer Homebrew 3.15.2 that never gets the chance, and a terminal that picks the
+   other one.
+2. *"Check my whole environment."* → the sweep above.
+3. *"Which copy wins in this PATH? …/bin-2021:…/bin-2025:…/bin-broken:/usr/local/bin:/usr/bin:/bin"*
+   → the copies in that PATH, in slot order, with the dead entry named:
 
 ```text
 python3 — wins in the PATH you supplied: ~/which-copy-demo/bin-2021/python3
 
-3.9.2 · a standalone copy in bin-2021 · PATH slot 1 of 6
+version not checked · a standalone copy in bin-2021 · PATH slot 1 of 6
 
-⚠ An older copy of python3 wins: the name resolves to 3.9.2, and a newer copy never gets the chance.
-    ~/which-copy-demo/bin-2025/python3 — 3.13.1, a standalone copy in bin-2025, on PATH
-    /usr/bin/python3 — 3.9.6, a macOS system copy, on PATH
+! There are 3 separate copies of python3, and nothing here establishes that they are the same version: the winning copy has no version; 1 was not run.
+    ~/which-copy-demo/bin-2021/python3 — version not checked
+    ~/which-copy-demo/bin-2025/python3 — version not checked
+    /usr/bin/python3 — 3.9.6
 
 Copies found (3):
-  1. ~/which-copy-demo/bin-2021/python3 — 3.9.2 · a standalone copy in bin-2021  ← wins here
-  2. ~/which-copy-demo/bin-2025/python3 — 3.13.1 · a standalone copy in bin-2025  ← never reached
+  1. ~/which-copy-demo/bin-2021/python3 — version not checked · a standalone copy in bin-2021  ← wins here
+  2. ~/which-copy-demo/bin-2025/python3 — version not checked · a standalone copy in bin-2025  ← never reached
   3. /usr/bin/python3 — 3.9.6 · a macOS system copy  ← never reached
+
+Not run (2): a copy is executed only when Hermes's PATH, your login shell's PATH or a known install directory put it there. A file you name, a copy found only in a PATH you pass in, and a copy behind a relative PATH entry are described here and left alone.
 
 Scope: this is the PATH you supplied, not the one Hermes runs with. A command run through Hermes's terminal tool gets a login shell plus the directories Hermes adds, so neither PATH decides what that shell picks.
 
-Separately: this is not the PATH Hermes's process runs with. For python3, Hermes's own PATH resolves to $HERMES_HOME/tools/python-3.14.9+20261021-darwin-arm64/bin/python3 (3.14.9).
+Separately: this is not the PATH Hermes's process runs with. For python3, Hermes's own PATH resolves to /opt/homebrew/bin/python3 (3.15.2).
 ```
 
-3. *"And check the whole environment."* → the sweep: one trap, a handful of
-   warnings, everything else fine.
+Two things to say out loud about that report. It answers the question — which
+copy wins in that PATH, and that the 2025 copy never gets there — without
+pretending to have measured the other PATHs. And it **does not run the two copies
+the PATH pointed at**: they came from a string in the conversation, and a string
+in the conversation is not the machine. `/usr/bin/python3` does report a version,
+because the machine's own PATH already contains it. That distinction is the whole
+security story: a repository that tells an agent *"check this PATH for me"* cannot
+get its own script executed.
 
-The last line is the part people do not expect: Hermes's own PATH is not your
-shell's PATH. It is built when Hermes starts, which is why the answer to "which
-python?" has three different correct answers on one machine.
+The line that reframes everything is the second-to-last: Hermes's own PATH is not
+your shell's PATH. It is built when Hermes starts, which is why "which python?"
+has three different correct answers on one machine — and why the tool names the
+one it measured instead of calling it *"the PATH"*.
 
 ## What the verdicts mean
 
@@ -205,7 +224,7 @@ python?" has three different correct answers on one machine.
 | `skipped_dead_entries` | warning | A broken symlink or non-executable file sits earlier in PATH. The shell silently skips it, but `which` and your expectations do not. |
 | `version_unknown` | warning | The winner answered the version check with nothing usable, so it may not even be the tool you think it is. |
 | `hermes_vs_terminal` | warning / note | Your login shell resolves the name to a different file. Warning when both versions are known and differ, note otherwise. |
-| `multiple_copies` | note / warning | Several separate copies are installed. The report says exactly which case it measured: every copy reports the same version (note), the winner is the newest (note), versions that cannot honestly be ordered (warning), copies that reported no version (warning), or copies the sweep did not ask (warning). |
+| `multiple_copies` | note / warning | Several separate copies are installed. The report says exactly which case it measured: every copy reports the same version (note), the winner is the newest (note), versions that cannot honestly be ordered (warning), copies that reported no version (warning), copies the sweep did not ask (warning), or copies this check refused to run (warning). |
 | `hermes_managed_winner` | note | Hermes's own PATH picks its bundled copy, not yours. Deliberate on Hermes's part — worth knowing. |
 | `installed_not_on_path` | note | Copies exist, but nothing on PATH can reach them. |
 | `not_installed` | note / warning | Nothing usable on PATH — a warning when something *looks* installed but cannot run. |
@@ -251,8 +270,9 @@ marked unverified — because "I do not know" is the honest answer.
 **Two names for one file are one copy.** Symlinks that resolve to the same file
 are grouped as aliases ("also named: …") instead of being counted as duplicates.
 
-**Versions are asked, not inferred.** Each discovered binary is run with its
-version flag — argv only, never a shell — with:
+**Versions are asked, not inferred — and only asked of copies the machine put
+there.** Each discovered binary is run with its version flag — argv only, never a
+shell — with:
 
 - a 3-second deadline per probe, a shared budget for a sweep, and a cap on how
   many copies a sweep asks (copies it did not ask are reported as not probed);
@@ -266,12 +286,24 @@ version flag — argv only, never a shell — with:
 - `cwd=/`, so a tool that writes "next to itself" fails instead of littering
   your project.
 
+**Only the machine gets to decide what runs.** A copy is executed only when the
+directory that holds it is one of: an absolute entry on Hermes's process PATH, an
+absolute entry on your login shell's PATH, or one of the fixed install
+directories this plugin knows about (`~/.local/bin`, Homebrew's prefixes,
+`$HERMES_HOME/bin`, the uv/pipx/pyenv/nvm trees, the macOS system). Nothing in a
+tool call takes part in that decision, and a relative or empty PATH entry — `""`
+or `.` in PATH, which resolves against whatever directory you happen to be in —
+is never searched for a probe. So a repository that talks an agent into passing
+`path: .` gets a report about its files, not an execution of them. The cost is
+honest: copies that exist only in a PATH you paste in are reported with their
+version unchecked.
+
 **And it refuses to overstate.** Two version strings that were never meant to be
 compared (a date version against a semantic one, or schemes with different
 depths) are reported as *"cannot be ordered"* rather than sorted by whichever
 number looks bigger. A copy that printed no version is "reported no version"; a
-copy the sweep did not ask is "not asked". Neither is presented as matching the
-winner.
+copy the sweep did not ask is "not asked"; a copy this check will not execute is
+"not run", with the reason. None of them is presented as matching the winner.
 
 ## Safety and privacy
 
@@ -279,13 +311,18 @@ winner.
 - **No writes by this plugin.** It creates, edits, deletes, moves and relinks
   nothing — not your files, not PATH, not the copies it inspects. The test suite
   asserts this against a directory tree before and after every tool call.
-- **What does run.** Your login shell (to read its PATH), and each copy it asks
-  for a version — including a file you name yourself as `tool`. That last case is
-  the one to know about: an absolute path you pass is executed with its version
-  flag when `probe_versions` is on (the default), and the report says so, showing
-  the exact argv. A probed program is free to write its own files — CPython on
-  macOS makes one under `~/Library/Caches` — that is the program's doing, not
+- **What does run.** Your login shell (to read its PATH), and the version probe of
+  a copy that the machine's own PATH, your login shell's PATH or a known install
+  directory put there. A probed program is free to write its own files — CPython
+  on macOS makes one under `~/Library/Caches` — that is the program's doing, not
   this plugin's.
+- **What never runs: anything named in a tool call.** A path passed as `tool` is
+  described, never executed — the report says so and prints the command you can
+  run yourself. The same goes for a copy found only in a `path` string you pass
+  in, and for a copy behind a relative or empty PATH entry. Naming a file, or
+  pasting a PATH, is not consent to run what is in it; only the machine's own
+  configuration grants that. Every copy that was left alone is listed under
+  *"Not run"*, with the reason, and carries a `not_run` field in the JSON.
 - **No credentials.** It never reads `.env`, `auth.json`, a keychain, or another
   tool's login, and it strips the environment it hands to a probed binary.
 - **No shell strings.** Every subprocess is an argv list; `shell=True` does not
@@ -304,11 +341,11 @@ winner.
 - **Your login shell is started fresh.** A terminal opened from an already
   configured environment (a shell inside another shell, an IDE) may carry more
   entries than the captured PATH shows.
-- **A hostile binary is still a binary.** Probes run without a shell and without
-  your secrets, but they do execute the copy being asked — including a path you
-  named. If you would rather execute nothing, pass `probe_versions: false` and
-  `check_login_shell: false`; the report then says versions were not checked
-  instead of guessing.
+- **A pasted PATH is reported, not run.** Copies that exist only in a PATH you
+  pass in come back with "version not checked" — that is deliberate, and no flag
+  turns it off. If you want their versions, put that directory on your own PATH
+  and ask again, or run the copy yourself. For an answer that starts no process at
+  all, pass `probe_versions: false` and `check_login_shell: false`.
 - **A name and its target are two facts, not one.** "The name lives in
   `/opt/homebrew/bin`" and "the file is a Homebrew formula in `Cellar`" are both
   true and people ask about each, so Which Copy reports the name, the resolution,
@@ -330,9 +367,12 @@ its seeding with the system default PATH, and its timeout/error paths;
 provenance for every manager layout; version parsing against real banner strings
 and the cases where comparison must be refused; every verdict including the ones
 that only appear when Hermes's own copy wins, and the cases where a copy was not
-asked or reported nothing; the read-only guarantee; the demo scripts' refusal to
-delete a directory that is not the demo; and a static audit of the source for
-network imports, shell strings, writes and deletes.
+asked, reported nothing, or was not run; the **security boundary** — a directory
+passed as `path`, a file passed as `tool`, and a copy behind a relative or empty
+PATH entry each get a tripwire script that would leave a file behind if it ever
+executed, and the test fails if it does; the read-only guarantee; the demo
+scripts' refusal to delete a directory that is not the demo; and a static audit of
+the source for network imports, shell strings, writes and deletes.
 
 ## License
 
