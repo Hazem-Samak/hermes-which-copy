@@ -210,6 +210,8 @@ def test_manifest_description_does_not_claim_named_files_are_run(plugin):
     assert "copy it found (argv only" not in manifest
     assert "Nothing named in a tool" in manifest
     assert "prompt-injected repository" in manifest
+    # The supplied PATH may pick candidates, never the interpreter a probe uses.
+    assert "never the raw supplied string" in " ".join(manifest.split())
 
 
 def test_readme_says_nothing_named_in_an_argument_is_executed():

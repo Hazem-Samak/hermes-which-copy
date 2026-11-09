@@ -99,9 +99,11 @@ WHICH_COPY = {
                     "setup. It is read, never run: copies found only in the PATH you "
                     "pass in are reported with their version not checked, because a "
                     "PATH in a tool call is not a reason to execute what it "
-                    "contains. The report says plainly that it is the PATH supplied "
-                    "and still states what the Hermes process would resolve for that "
-                    "name. Leave it out to answer the real question."
+                    "contains. A trusted copy that is probed uses Hermes's process "
+                    "PATH, never the string you pass in. The report says plainly "
+                    "that it is the PATH supplied and still states what the Hermes "
+                    "process would resolve for that name. Leave it out to answer "
+                    "the real question."
                 ),
             },
         },
@@ -185,8 +187,9 @@ WHICH_COPY_SCAN = {
                     "Optional. Sweep this PATH string instead of Hermes's own (a "
                     "script's, a cron job's, or a demo setup). It is read, never run: "
                     "copies found only in it are reported without a version probe. "
-                    "The report says which PATH it inspected, and that it is not the "
-                    "one Hermes runs with."
+                    "A trusted copy that is probed uses Hermes's process PATH, never "
+                    "the string you pass in. The report says which PATH it inspected, "
+                    "and that it is not the one Hermes runs with."
                 ),
             },
         },

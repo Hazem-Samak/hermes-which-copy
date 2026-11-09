@@ -482,6 +482,66 @@ def test_a_directory_named_in_path_cannot_get_its_copy_executed(tools, sandbox, 
     assert not (repo / "was-run").exists(), "the repository's own script was executed"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shebang semantics")
+@pytest.mark.parametrize("handler", ["which_copy", "which_copy_scan"])
+def test_supplied_path_cannot_hijack_a_trusted_scripts_interpreter(
+    tools, sandbox, monkeypatch, handler
+):
+    """A trusted script's ``#!`` lookup must not resolve inside a supplied PATH.
+
+    ``ProbeTrust`` only vouches for the script file itself. The kernel resolves
+    its interpreter with the child PATH, so a caller-named repository placed
+    before the trusted directory must not be able to run its own ``fakeinterp``.
+    """
+    repo = sandbox / "injected-repo"
+    trusted = sandbox / "trusted-bin"
+    machine = sandbox / "machine-bin"
+    marker = repo / "was-run"
+
+    # Redirection is a shell builtin: before the fix the child PATH holds only
+    # the supplied directories, so a bare `touch` might not resolve and the
+    # test would pass for the wrong reason. The decoy version distinguishes an
+    # executed interpreter from a probe that merely failed.
+    write_exe(
+        repo / "fakeinterp",
+        body="#!/bin/sh\n: > '%s'\necho 'Tool 9.9.9'\n" % marker,
+    )
+    write_exe(machine / "fakeinterp", body="#!/bin/sh\necho 'Tool 1.2.3'\n")
+    target = write_exe(
+        trusted / "wc-env-probe-target",
+        body="#!/usr/bin/env fakeinterp\n",
+    )
+
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join((str(machine), str(trusted), "/usr/bin", "/bin"))
+    )
+    supplied_path = os.pathsep.join((str(repo), str(trusted)))
+
+    base = {
+        "path": supplied_path,
+        "probe_versions": True,
+        "check_login_shell": False,
+        "include_off_path": False,
+    }
+    if handler == "which_copy":
+        payload = call(tools, dict(base, tool="wc-env-probe-target"))
+    else:
+        payload = scan(tools, dict(base, tools=["wc-env-probe-target"]))
+
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "custom-path"
+    assert not marker.exists(), "the supplied PATH selected the probe's interpreter"
+
+    if handler == "which_copy":
+        copies = [copy for copy in payload["copies"] if copy["path_raw"] == str(target)]
+        assert len(copies) == 1
+        assert copies[0]["version"] == "1.2.3"
+    else:
+        winner = payload["tools"][0]["winner"]
+        assert winner["path_raw"] == str(target)
+        assert winner["version"] == "1.2.3"
+
+
 def test_a_file_named_in_tool_cannot_get_itself_executed(tools, sandbox, monkeypatch):
     repo = sandbox / "injected-repo"
     file = _tripwire(repo / "setup")

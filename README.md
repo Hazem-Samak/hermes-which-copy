@@ -282,7 +282,8 @@ shell — with:
   color/pager settings. The probed program never sees `OPENAI_API_KEY` or
   anything else from Hermes's environment. The PATH it is given is the one it
   would run under — Hermes's for a copy found there, the shell's for a copy
-  found in the login shell;
+  found in the login shell. For a call that supplies `path`, a trusted copy is
+  still probed with Hermes's own process PATH, never the raw supplied string;
 - `cwd=/`, so a tool that writes "next to itself" fails instead of littering
   your project.
 
@@ -321,8 +322,11 @@ copy the sweep did not ask is "not asked"; a copy this check will not execute is
   run yourself. The same goes for a copy found only in a `path` string you pass
   in, and for a copy behind a relative or empty PATH entry. Naming a file, or
   pasting a PATH, is not consent to run what is in it; only the machine's own
-  configuration grants that. Every copy that was left alone is listed under
-  *"Not run"*, with the reason, and carries a `not_run` field in the JSON.
+  configuration grants that. A trusted copy found through a supplied `path` may
+  be probed, but that probe runs with Hermes's own process PATH — so a
+  `#!/usr/bin/env` line inside it cannot resolve into a repository the call
+  named. Every copy that was left alone is listed under *"Not run"*, with the
+  reason, and carries a `not_run` field in the JSON.
 - **No credentials.** It never reads `.env`, `auth.json`, a keychain, or another
   tool's login, and it strips the environment it hands to a probed binary.
 - **No shell strings.** Every subprocess is an argv list; `shell=True` does not

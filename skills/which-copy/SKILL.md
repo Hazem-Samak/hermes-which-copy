@@ -1,7 +1,7 @@
 ---
 name: which-copy
 description: "Report which copy of a command Hermes runs, without overstating it."
-version: 1.2.0
+version: 1.2.1
 author: Hazem Samak
 license: MIT
 platforms: [macos, linux]
@@ -93,8 +93,10 @@ Two of those are read-only answers, and it matters which:
   about the file, and the command, not a version you made the tool fetch.
 - **A `path` you pass in** is read, not run. Copies that exist only there come
   back "version not checked"; copies that the machine's own PATHs already reach
-  still report their versions. Do not present the missing versions as a failure —
-  it is the boundary that stops a prompt-injected repository from getting its own
-  script executed. If the person wants the versions, the honest next step is to
-  put that directory on their own PATH and ask again, or to run the copy
+  still report their versions, and those probes use Hermes's own process PATH —
+  never the raw string you passed. Do not present the missing versions as a
+  failure — it is the boundary that stops a prompt-injected repository from
+  getting its own script executed, including through a trusted script's
+  `#!/usr/bin/env` interpreter. If the person wants the versions, the honest next
+  step is to put that directory on their own PATH and ask again, or to run the copy
   themselves.

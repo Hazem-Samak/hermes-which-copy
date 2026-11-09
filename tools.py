@@ -97,6 +97,8 @@ def _probe_all(
     Each target carries the PATH that copy would see, so a copy found through
     the login shell is asked its version with the shell's PATH — not with
     Hermes's, which would make "it could not find a command it needs" a lie.
+    Targets built from a supplied PATH carry Hermes's own process PATH instead:
+    a supplied PATH may choose candidates, never their interpreters.
     """
     unique = []
     seen = set()
@@ -139,6 +141,18 @@ def _sources(check_login_shell: bool) -> tuple[PathSource, PathSource | None]:
     source = pathmodel.hermes_source()
     shell = pathmodel.login_shell_source() if check_login_shell else None
     return source, shell
+
+
+def _version_probe_path(source: PathSource) -> str:
+    """The child PATH for probing a copy found in ``source``.
+
+    A supplied PATH describes candidates but must never select the interpreter
+    a trusted script's ``#!`` line resolves. Custom-source probes therefore run
+    with Hermes's own process PATH, never the raw supplied string.
+    """
+    if source.kind == pathmodel.CUSTOM_SOURCE:
+        return pathmodel.hermes_source().raw
+    return source.raw
 
 
 def _collect(
@@ -185,10 +199,11 @@ def _probe_report(
         )
 
     targets: list[tuple[str, str, str]] = []
+    probe_path = _version_probe_path(source)
     for item in _probeable(on_path):
-        targets.append((item.candidate.entry_path, tool, source.raw))
+        targets.append((item.candidate.entry_path, tool, probe_path))
     for item in _probeable(off_path, 4):
-        targets.append((item.candidate.entry_path, tool, source.raw))
+        targets.append((item.candidate.entry_path, tool, probe_path))
     if login_findings:
         shell_path = shell.raw if shell is not None else source.raw
         live = _probeable(login_findings)
@@ -565,11 +580,12 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
         probes: dict[tuple[str, str], Probe] = {}
         if probe_versions:
             targets: list[tuple[str, str, str]] = []
+            probe_path = _version_probe_path(source)
             for name, on_path, off_path in collected:
                 for item in _probeable(on_path, MAX_PROBES_PER_TOOL):
-                    targets.append((item.candidate.entry_path, name, source.raw))
+                    targets.append((item.candidate.entry_path, name, probe_path))
                 for item in _probeable(off_path, 1):
-                    targets.append((item.candidate.entry_path, name, source.raw))
+                    targets.append((item.candidate.entry_path, name, probe_path))
                 login_live = _probeable(login_map.get(name, []))
                 if login_live and login_source is not None:
                     targets.append((login_live[0].candidate.entry_path, name, login_source.raw))
