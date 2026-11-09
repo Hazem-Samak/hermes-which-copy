@@ -7,9 +7,9 @@
 # Hermes already uses, nothing written outside $DEMO_ROOT (~/which-copy-demo).
 #
 # One thing to expect on camera: the sandbox copies are not on Hermes's own PATH.
-# Hermes builds its PATH when it starts, so copies in a PATH *pasted into the
-# chat* are described and ordered but not executed. That is the security property
-# the report is making, and its "Not run" line says so.
+# Hermes builds its PATH when it starts, so copies that exist only in a PATH
+# *pasted into the chat* are described and ordered but never executed. That is
+# the security property the report is making, and its "Not run" line says so.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

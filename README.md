@@ -71,7 +71,7 @@ That shell was started with the system default PATH (/usr/bin:/bin:/usr/sbin:/sb
 Scope: this is the PATH of the Hermes process. A command run through Hermes's terminal tool gets a login shell whose PATH also gains directories Hermes adds (~/.local/bin, $HERMES_HOME/bin, Homebrew's defaults), so that shell can pick a different copy.
 ```
 
-Six entries, five distinct files (the venv `python3` is a second name for the
+Seven names, six distinct files (the venv `python3` is a second name for the
 same interpreter, so it is listed as an alias, not as another copy). Three
 different answers depending on who you ask — and the one Hermes's own PATH
 reaches is neither the newest (Homebrew's 3.15.2, which your terminal runs) nor
@@ -83,21 +83,21 @@ And the sweep, on the same machine:
 ```text
 Checked 25 tools against Hermes's process PATH (41 entries).
 
-1 trap · 6 warnings · 10 notes.
+2 traps · 5 warnings · 11 notes.
 
+⚠ node         26.12.1    $HERMES_HOME/tools/…/bin/node      older copy wins; a newer one is installed
 ⚠ python3      3.14.9     $HERMES_HOME/tools/…/bin/python3   older copy wins; a newer one is installed
 ! java         ?          /usr/bin/java                      reported no version
-! node         26.12.1    $HERMES_HOME/tools/…/bin/node      your terminal picks a different copy
 ! npm          12.0.2     $HERMES_HOME/tools/…/bin/npm       your terminal picks a different copy
 ! npx          12.0.2     $HERMES_HOME/tools/…/bin/npx       your terminal picks a different copy
 ! pnpm         ?          ~/.local/bin/pnpm                  reported no version
 ! python       3.14.9     $HERMES_HOME/tools/…/bin/python    several copies, some not probed
+• codex        0.167.0    ~/.local/bin/codex                 your terminal picks a different copy
 • grok         1.0.77     ~/.grok/bin/grok                   one file, several names
 • hermes       0.23.0     $HERMES_HOME/…/.hermes/bin/hermes  your terminal picks a different copy
 • pip3         26.2.2     $HERMES_HOME/tools/…/bin/pip3      your terminal picks a different copy
 • uv           0.13.7     ~/.local/bin/uv                    several copies, newest wins
-✓ brew         7.0.12-176 /opt/homebrew/bin/brew
-✓ codex        0.167.0    ~/.local/bin/codex
+✓ brew         7.0.12-221 /opt/homebrew/bin/brew
 ✓ gh           2.103.3    /opt/homebrew/bin/gh
 ✓ git          2.54.0     /usr/bin/git
 ✓ opencode     2.2.6      ~/.opencode/bin/opencode
@@ -177,43 +177,58 @@ What it shows, in the order to record it:
    other one.
 2. *"Check my whole environment."* → the sweep above.
 3. *"Which copy wins in this PATH? …/bin-2021:…/bin-2025:…/bin-broken:/usr/local/bin:/usr/bin:/bin"*
-   → the copies in that PATH, in slot order, with the dead entry named:
+   → the copies in that PATH, in slot order, every copy it did not run, and a
+   final line saying what Hermes's own PATH would run:
 
 ```text
 python3 — wins in the PATH you supplied: ~/which-copy-demo/bin-2021/python3
 
 version not checked · a standalone copy in bin-2021 · PATH slot 1 of 6
 
-! There are 3 separate copies of python3, and nothing here establishes that they are the same version: the winning copy has no version; 1 was not run.
+! 8 separate copies of python3 are installed — 3 in the PATH you supplied, 5 elsewhere on this machine, and nothing here establishes that they are the same version: 1 was not asked for a version; 2 were not run.
     ~/which-copy-demo/bin-2021/python3 — version not checked
     ~/which-copy-demo/bin-2025/python3 — version not checked
     /usr/bin/python3 — 3.9.6
+    /opt/homebrew/bin/python3 — 3.15.2
+    $HERMES_HOME/tools/python-3.14.7+20260901-darwin-arm64/bin/python3 — 3.14.7
+    $HERMES_HOME/tools/python-3.14.9+20261021-darwin-arm64/bin/python3 — 3.14.9
+    ~/.local/share/uv/tools/skill-lens-cli/bin/python3 — 3.12.14
+    ~/.local/share/uv/tools/trafilatura/bin/python3 — version not checked
 
-Copies found (3):
-  1. ~/which-copy-demo/bin-2021/python3 — version not checked · a standalone copy in bin-2021  ← wins here
+Copies found (8):
+  1. ~/which-copy-demo/bin-2021/python3 — version not checked · a standalone copy in bin-2021  ← wins in this PATH
   2. ~/which-copy-demo/bin-2025/python3 — version not checked · a standalone copy in bin-2025  ← never reached
   3. /usr/bin/python3 — 3.9.6 · a macOS system copy  ← never reached
+  4. /opt/homebrew/bin/python3 — 3.15.2 · Homebrew formula python@3.15  ← not in the PATH you supplied
+  5. $HERMES_HOME/tools/python-3.14.7+20260901-darwin-arm64/bin/python3 — 3.14.7 · a tool Hermes downloaded  ← not in the PATH you supplied
+  6. $HERMES_HOME/tools/python-3.14.9+20261021-darwin-arm64/bin/python3 — 3.14.9 · a tool Hermes downloaded  ← not in the PATH you supplied
+  7. ~/.local/share/uv/tools/skill-lens-cli/bin/python3 — 3.12.14 · a uv tool environment (skill-lens-cli)  ← not in the PATH you supplied
+  8. ~/.local/share/uv/tools/trafilatura/bin/python3 — a uv tool environment (trafilatura)  ← not in the PATH you supplied
 
-Not run (2): a copy is executed only when Hermes's PATH, your login shell's PATH or a known install directory put it there. A file you name, a copy found only in a PATH you pass in, and a copy behind a relative PATH entry are described here and left alone.
+Not run (2): a copy is executed only when Hermes's PATH or a known install directory put it there. A file you name, a copy found only in a PATH you pass in, and a copy behind a relative PATH entry are described here and left alone.
 
-Scope: this is the PATH you supplied, not the one Hermes runs with. A command run through Hermes's terminal tool gets a login shell plus the directories Hermes adds, so neither PATH decides what that shell picks.
+Scope: this is the PATH you supplied, read exactly as written. Hermes runs with the PATH of its own process, and a command run through Hermes's terminal tool gets a login shell whose PATH also gains directories Hermes adds — so neither of those is the PATH above.
 
-Separately: this is not the PATH Hermes's process runs with. For python3, Hermes's own PATH resolves to /opt/homebrew/bin/python3 (3.15.2).
+Separately: Hermes's own process PATH resolves python3 to $HERMES_HOME/tools/python-3.14.9+20261021-darwin-arm64/bin/python3 (3.14.9).
 ```
 
 Two things to say out loud about that report. It answers the question — which
 copy wins in that PATH, and that the 2025 copy never gets there — without
 pretending to have measured the other PATHs. And it **does not run the two copies
 the PATH pointed at**: they came from a string in the conversation, and a string
-in the conversation is not the machine. `/usr/bin/python3` does report a version,
-because the machine's own PATH already contains it. That distinction is the whole
-security story: a repository that tells an agent *"check this PATH for me"* cannot
-get its own script executed.
+in the conversation is not the machine. The copies that *do* report a version are
+the ones the machine put somewhere this check trusts on its own — `/usr/bin` is in
+the pasted PATH and on every Mac, while Homebrew's 3.15.2, both Hermes tools and
+the `uv` tool sit in known install directories and would report even if the pasted
+PATH never named them. That distinction is the whole security story: a repository
+that tells an agent *"check this PATH for me"* cannot get its own script executed.
 
-The line that reframes everything is the last one: Hermes's own PATH is not your
-shell's PATH. It is built when Hermes starts, which is why "which python?" has
-three different correct answers on one machine — and why the tool names the one it
-measured instead of calling it *"the PATH"*.
+The last two lines reframe it. The scope line says this was the PATH you supplied,
+not the one Hermes runs with and not the one its terminal tool builds, and the
+final line says what Hermes's own process PATH would run — its own 3.14.9, which
+is built when Hermes starts. That is why "which python?" has three different
+correct answers on one machine, and why the tool names the PATH it measured
+instead of calling it *"the PATH"*.
 
 ## What the verdicts mean
 

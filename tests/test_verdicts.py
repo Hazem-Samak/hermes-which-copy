@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 
@@ -117,7 +118,7 @@ def test_off_path_newer_copy_counts_as_shadowed(build, verdicts, pathmodel, tmp_
     off = [build(homebrew, version="3.13.1", on_path=False)]
     report = analyse(verdicts, pathmodel, findings, off_path=off)
     assert report["verdict"] == "shadowed_by_older"
-    assert "outside PATH" in report["summary"]
+    assert "not in the PATH you supplied" in report["summary"]
 
 
 def test_uncomparable_versions_are_not_ordered(build, verdicts, pathmodel, tmp_path):
@@ -175,7 +176,7 @@ def test_dead_entry_before_the_winner_is_a_warning(build, verdicts, pathmodel, t
     report = analyse(verdicts, pathmodel, findings)
     assert report["verdict"] == "skipped_dead_entries"
     assert report["severity"] == "warning"
-    assert "silently skips it" in report["summary"]
+    assert "Earlier in the PATH you supplied" in report["summary"]
     assert "broken symlink" in report["summary"]
     assert report["winner"]["path_raw"] == str(working)
 
@@ -214,7 +215,9 @@ def test_off_path_only_says_installed_but_unreachable(build, verdicts, pathmodel
     )
     codes = {item["code"] for item in report["verdicts"]}
     assert "installed_not_on_path" in codes
-    assert "cannot run any of them by name" in report["summary"]
+    # Outside the searched PATH — which is not a claim about what Hermes runs.
+    assert "installed outside the PATH you supplied" in report["summary"]
+    assert "Hermes cannot run" not in report["summary"]
 
 
 # --------------------------------------------------------------------------- #
@@ -409,9 +412,84 @@ def test_supplied_path_is_labelled_as_supplied(build, verdicts, pathmodel, tmp_p
     report = analyse(verdicts, pathmodel, [finding], source=pathmodel.custom_source(str(tmp_path / "bin")))
     assert report["path"]["kind"] == "custom"
     assert "wins in the PATH you supplied" in report["summary"]
-    assert "wins here" in report["summary"]
+    assert "wins in this PATH" in report["summary"]
     # It must not slide into claiming the Hermes copy for a PATH the caller gave.
     assert "Hermes's process PATH resolves to" not in report["summary"]
+
+
+def test_a_supplied_path_report_never_names_another_path(build, verdicts, pathmodel, tmp_path):
+    """Every line speaks about the PATH that was read, not the machine's."""
+    inside = build(write_exe(tmp_path / "bin-2021" / "python3"), version=None, slot=0)
+    outside = build(
+        write_exe(tmp_path / "homebrew" / "python3", version="3.13.1"),
+        version="3.13.1",
+        on_path=False,
+    )
+    report = analyse(verdicts, pathmodel, [inside], off_path=[outside])
+    summary = report["summary"]
+    assert "Hermes's process PATH" not in summary
+    assert "off PATH entirely" not in summary
+    assert "outside PATH" not in summary
+    assert "not in the PATH you supplied" in summary
+
+
+def test_a_supplied_path_says_how_many_copies_are_in_it(build, verdicts, pathmodel, tmp_path):
+    """A total count must not be read as the number inside the supplied PATH."""
+    winner = build(write_exe(tmp_path / "bin" / "python3", version="3.9.2"), version="3.9.2", slot=0)
+    second = build(write_exe(tmp_path / "bin2" / "python3", version="3.9.2"), version="3.9.2", slot=1)
+    older = build(
+        write_exe(tmp_path / "homebrew" / "python3", version="3.8.0"),
+        version="3.8.0",
+        on_path=False,
+    )
+    report = analyse(verdicts, pathmodel, [winner, second], off_path=[older])
+    text = next(item["text"] for item in report["verdicts"] if item["code"] == "multiple_copies")
+    assert "2 in the PATH you supplied" in text
+    assert "1 elsewhere on this machine" in text
+
+
+def test_not_run_count_matches_the_multiple_copies_sentence(build, verdicts, pathmodel, tmp_path):
+    """The verdict and the "Not run" line must count the same copies."""
+    first = build(write_exe(tmp_path / "bin-2021" / "python3"), version=None, slot=0)
+    second = build(write_exe(tmp_path / "bin-2025" / "python3"), version=None, slot=1)
+    reason = pathmodel.NOT_RUN_OUTSIDE_NO_SHELL
+    findings = [
+        dataclasses.replace(first, not_run=reason),
+        dataclasses.replace(second, not_run=reason),
+    ]
+    newer = build(
+        write_exe(tmp_path / "homebrew" / "python3", version="3.13.1"),
+        version="3.13.1",
+        on_path=False,
+    )
+    report = analyse(verdicts, pathmodel, findings, off_path=[newer])
+    summary = report["summary"]
+    assert "Not run (2)" in summary
+    assert "2 were not run" in summary
+    assert "the winning copy has no version" not in summary
+    assert "1 was not run" not in summary
+
+
+def test_default_mode_still_names_hermes_process_path(build, verdicts, pathmodel, tmp_path):
+    """The other branch: a report for Hermes's own PATH keeps its own wording."""
+    broken = tmp_path / "broken" / "python3"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.symlink_to(tmp_path / "nowhere")
+    winner = write_exe(tmp_path / "bin" / "python3", version="3.13.1")
+    off = write_exe(tmp_path / "off" / "python3", version="3.15.2")
+    report = analyse(
+        verdicts,
+        pathmodel,
+        [build(broken, slot=0), build(winner, version="3.13.1", slot=1)],
+        off_path=[build(off, version="3.15.2", on_path=False)],
+        source=pathmodel.hermes_source("%s:%s" % (broken.parent, winner.parent)),
+    )
+    summary = report["summary"]
+    assert summary.startswith("python3 — Hermes's process PATH resolves to")
+    assert "wins in Hermes's PATH" in summary
+    assert "silently skips it" in summary
+    assert "outside PATH" in summary
+    assert "Hermes's process PATH picks 3.13.1" in summary
 
 
 # --------------------------------------------------------------------------- #

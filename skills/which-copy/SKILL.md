@@ -1,7 +1,7 @@
 ---
 name: which-copy
 description: "Report which copy of a command Hermes runs, without overstating it."
-version: 1.2.1
+version: 1.2.2
 author: Hazem Samak
 license: MIT
 platforms: [macos, linux]
@@ -60,6 +60,10 @@ add one useful sentence — not to rewrite it.
   JSON carries a `not_run` reason and the summary has a "Not run" line. Keep that
   line. If the person wants the version of the file they named, tell them the
   command to run themselves (the report prints it); do not imply the tool did it.
+- **Never read the copies list as "what is in that PATH".** A supplied-PATH report
+  also lists copies found elsewhere on the machine, each marked "not in the PATH
+  you supplied", and the count line splits them: "3 in the PATH you supplied, 5
+  elsewhere on this machine".
 - **Never invent a version.** If `version` is null, say the copy did not report
   one; do not guess from the file name. "version not checked" and "not run" are
   answers, not gaps to fill in.

@@ -10,8 +10,8 @@ copy of a tool installed, the copy you think you are using and the copy Hermes
 runs are two different things — and nothing warns you.
 
 The second beat is newer, and worth the ten seconds it takes: hand it a messy
-PATH and it answers *without running anything in it*. A PATH in a chat message is
-not permission to execute a file.
+PATH and it answers *without running a copy that exists only there*. A PATH in a
+chat message is not permission to execute a file.
 
 ## Before you hit record
 
@@ -35,8 +35,8 @@ is nothing else to prepare.
 | 0:35 | The report | Read the verdict: "It runs its own 3.14.9 — and Homebrew's 3.15.2 is newer and never gets the chance." |
 | 0:50 | Scroll to *"Your terminal and Hermes disagree…"* | "Same machine, same command, three different answers." |
 | 1:00 | Hermes: *"check my whole environment"* | "One question sweeps the usual AI tools." |
-| 1:15 | The table, `python3` at the top with ⚠ | "One trap, the rest clean, and it names the ones my terminal and Hermes disagree about." |
-| 1:25 | Hermes: paste the sandbox PATH question | "And when I hand it someone else's PATH, it reads it — and it will not run a single thing in it." |
+| 1:15 | The table, `python3` and `node` at the top with ⚠ | "Two traps, the rest clean, and it names the ones my terminal and Hermes disagree about." |
+| 1:25 | Hermes: paste the sandbox PATH question | "And when I hand it someone else's PATH, it reads it — and it will not run anything that exists only in there." |
 
 Stop at 90 seconds. Do not cut away while a report is on screen: the whole point
 is that the answer arrives finished and readable, with the paths in it.
@@ -49,12 +49,18 @@ is that the answer arrives finished and readable, with the paths in it.
 
 ## What to point at in the last report
 
-The pasted-PATH report ends with a `Not run (n)` line. That is not a failure: the
-sandbox directories are not on Hermes's own PATH, so the copies there are
-described, ordered, and left alone. The one copy that does report a version is
-`/usr/bin/python3`, because that directory *is* on every Mac's PATH. Say it in one
-sentence — *"a PATH you paste in is read, not run, so a repository can't talk it
-into executing a file"* — and move on.
+The pasted-PATH report has a `Not run (2)` line: those are the two sandbox copies.
+That is not a failure — the sandbox directories are not on Hermes's own PATH and
+not in a known install directory, so the copies there are described, ordered, and
+left alone. The copies that *do* report a version are the ones the machine put in
+a directory this check trusts on its own: `/usr/bin/python3` (3.9.6), Homebrew's
+3.15.2, Hermes's own 3.14.9, and the uv tool. Say it in one sentence — *"a PATH you
+paste in is read, not run, so a repository can't talk it into executing a file"* —
+and move on.
+
+The report's **last** line is the one to end on: `Separately: Hermes's own process
+PATH resolves python3 to …(3.14.9)`. That is the punchline of the whole demo — the
+PATH you pasted is not the PATH Hermes runs with.
 
 If you want a version comparison on camera, use the real question in beat 1: that
 report compares copies the machine actually has, and it is the one people

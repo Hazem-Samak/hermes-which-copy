@@ -69,9 +69,10 @@ To see the ordering in a shell, put the sandbox first:
   export PATH="$DEMO_ROOT/bin-2021:$DEMO_ROOT/bin-2025:$DEMO_ROOT/bin-broken:\$PATH"
 
 Hermes keeps its own PATH — it is built when Hermes starts — so a sandbox PATH
-you paste into the chat is read, ordered and reported, and nothing in it is run
-unless that directory is already on Hermes's own PATH. Ask it anyway; the report
-says which copies it left alone and why:
+you paste into the chat is read, ordered and reported. Nothing that exists only
+in it is run: a copy is probed only when one of the machine's own PATHs or a
+known install directory already has it. Ask it anyway; the report says which
+copies it left alone and why:
 
   hermes chat -q "which python3 will you use?"
 

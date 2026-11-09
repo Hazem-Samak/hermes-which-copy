@@ -695,6 +695,14 @@ NOT_RUN_OUTSIDE = (
     "it is not in a directory this check runs files from — Hermes's PATH, your "
     "login shell's PATH, or a known install directory"
 )
+#: The same refusal on a call that never read a login shell (``check_login_shell:
+#: false``, or a supplied ``path``). Naming the shell's PATH there would claim a
+#: directory this call never consulted.
+NOT_RUN_OUTSIDE_NO_SHELL = (
+    "it is not in a directory this check runs files from — Hermes's PATH or a "
+    "known install directory; no login shell was read for this call"
+)
+
 NOT_RUN_RELATIVE = (
     "it sits in a relative or empty PATH entry, which resolves against whatever "
     "directory you happen to be in"
@@ -720,6 +728,9 @@ class ProbeTrust:
     """
 
     directories: tuple[str, ...] = ()
+    #: Whether a login shell was actually read for this call. The refusal text
+    #: says which PATHs were consulted, so it has to know.
+    shell_read: bool = False
 
     def allows(self, entry_path: str) -> bool:
         """May the copy at ``entry_path`` be executed?"""
@@ -770,15 +781,15 @@ def probe_trust(
             add(entry)
     for root in extra_roots(home=home, hermes=hermes):
         add(root)
-    return ProbeTrust(directories=tuple(directories))
+    return ProbeTrust(directories=tuple(directories), shell_read=bool(shell and shell.available))
 
 
 def refusal(candidate: Candidate, trust: ProbeTrust) -> str:
-    """Why this copy must not be executed — ``""`` when it may be."""
+    """Why this copy must not be executed — empty when it may be."""
     if candidate.unstable_entry:
         return NOT_RUN_RELATIVE
     if not trust.allows(candidate.entry_path):
-        return NOT_RUN_OUTSIDE
+        return NOT_RUN_OUTSIDE if trust.shell_read else NOT_RUN_OUTSIDE_NO_SHELL
     return ""
 
 

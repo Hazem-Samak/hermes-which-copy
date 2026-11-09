@@ -156,8 +156,34 @@ def test_which_copy_accepts_a_supplied_path(tools, sandbox, monkeypatch):
     assert payload["verdict"] == "multiple_copies"
     assert "wins in the PATH you supplied" in payload["summary"]
     assert "Not run (2)" in payload["summary"]
-    assert "Hermes's own PATH resolves to" in payload["summary"]
+    assert "Separately: Hermes's own process PATH resolves python3 to" in payload["summary"]
     assert str(hermes_python) in payload["summary"]
+    # The machine's PATH is named only in the separate line, never as the answer.
+    assert "Hermes's process PATH resolves to" not in payload["summary"]
+    assert "the PATH you supplied" in payload["how_to_read"]
+
+
+def test_a_supplied_path_report_reads_its_own_path_everywhere(tools, sandbox, monkeypatch):
+    """No part of a supplied-PATH answer may describe a different PATH."""
+    old = write_exe(sandbox / "a" / "python3", version="3.9.2")
+    new = write_exe(sandbox / "b" / "python3", version="3.13.1")
+    hermes_python = write_exe(sandbox / "hermes-bin" / "python3", version="3.14.9")
+    monkeypatch.setenv("PATH", str(hermes_python.parent))
+
+    payload = call(
+        tools,
+        {
+            "tool": "python3",
+            "path": "%s:%s" % (old.parent, new.parent),
+            "include_off_path": False,
+            "check_login_shell": False,
+        },
+    )
+    assert "the PATH you supplied" in payload["how_to_read"]
+    assert "Hermes process resolves" not in payload["how_to_read"]
+    # The not-run reason must not claim a login shell was consulted.
+    assert all("no login shell was read" in copy["not_run"] for copy in payload["copies"])
+    assert "your login shell's PATH" not in payload["summary"]
 
 
 def test_a_supplied_path_never_starts_a_probe(tools, sandbox, monkeypatch):
@@ -433,7 +459,9 @@ def test_scan_can_sweep_a_supplied_path(tools, sandbox):
     assert payload["tools"][0]["winner"]["version"] is None
     assert payload["tools"][0]["copies"] == 2
     assert "several copies, versions not checked" in payload["summary"]
-    assert "This was the PATH you supplied" in payload["summary"]
+    assert "Scope: this is the PATH you supplied" in payload["summary"]
+    assert "Scope: the PATH of the Hermes process" not in payload["summary"]
+    assert "the PATH you supplied" in payload["how_to_read"]
 
 
 def test_scan_without_a_path(tools, monkeypatch):

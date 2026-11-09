@@ -59,9 +59,17 @@ SCAN_SCOPE = (
 )
 
 CUSTOM_SCOPE = (
-    "Scope: this is the PATH you supplied, not the one Hermes runs with. A command run "
-    "through Hermes's terminal tool gets a login shell plus the directories Hermes adds, "
-    "so neither PATH decides what that shell picks."
+    "Scope: this is the PATH you supplied, read exactly as written. Hermes runs with the "
+    "PATH of its own process, and a command run through Hermes's terminal tool gets a login "
+    "shell whose PATH also gains directories Hermes adds — so neither of those is the PATH "
+    "above."
+)
+
+CUSTOM_SCAN_SCOPE = (
+    "Scope: this is the PATH you supplied, read exactly as written. Hermes runs with the PATH "
+    "of its own process, and Hermes's terminal tool builds yet another for the commands it "
+    "runs — neither of those is the PATH above. Call this sweep without `path`, or which_copy "
+    "on one name, to see what Hermes itself resolves."
 )
 
 
@@ -142,6 +150,17 @@ def _copy_line(
     return line
 
 
+def _location(candidate: Candidate, custom: bool) -> str:
+    """Where a copy was found, in the terms of the PATH this report searched.
+
+    A supplied PATH is not *the* PATH, so "off PATH entirely" would read as a
+    claim about the machine. The phrase names the PATH that was actually read.
+    """
+    if custom:
+        return "in the PATH you supplied" if candidate.on_path else "not in the PATH you supplied"
+    return "on PATH" if candidate.on_path else "outside PATH"
+
+
 def _version_or_unknown(finding: Finding | None) -> str:
     if finding is None:
         return "not installed"
@@ -170,6 +189,7 @@ def analyze(
 ) -> dict:
     """Build the full report for one tool name."""
     host = host or origin_module.host_arch()
+    custom = source.kind == pathmodel.CUSTOM_SOURCE
     repeated = pathmodel.repeated_slot_count(source)
     on_path_live = [f for f in findings if f.candidate.is_live]
     dead_on_path = [f for f in findings if not f.candidate.is_live]
@@ -178,7 +198,7 @@ def analyze(
     verdicts: list[Verdict] = []
 
     # ---- No usable copy on PATH ------------------------------------------ #
-    where = "Hermes's process PATH" if source.kind != pathmodel.CUSTOM_SOURCE else "the PATH you supplied"
+    where = "the PATH you supplied" if custom else "Hermes's process PATH"
     if winner is None:
         if dead_on_path:
             verdicts.append(
@@ -204,17 +224,28 @@ def analyze(
                 )
             )
         if off_path:
+            count = len(off_path)
+            if custom:
+                # "So Hermes cannot run them" would be a claim about a PATH this
+                # report never read — Hermes may well reach one of these.
+                text = "%d cop%s of %s %s installed outside the PATH you supplied." % (
+                    count,
+                    "y" if count == 1 else "ies",
+                    tool,
+                    "is" if count == 1 else "are",
+                )
+            else:
+                text = "%d cop%s of %s %s outside PATH, so Hermes cannot run any of them by name." % (
+                    count,
+                    "y" if count == 1 else "ies",
+                    tool,
+                    "exists" if count == 1 else "exist",
+                )
             verdicts.append(
                 Verdict(
                     "installed_not_on_path",
                     "note",
-                    "%d cop%s of %s exist%s outside PATH, so Hermes cannot run any of them by name."
-                    % (
-                        len(off_path),
-                        "y" if len(off_path) == 1 else "ies",
-                        tool,
-                        "" if len(off_path) == 1 else "s",
-                    ),
+                    text,
                     tuple(
                         "%s — %s" % (pathmodel.tidy(f.candidate.entry_path), _version_or_unknown(f))
                         for f in off_path
@@ -250,8 +281,13 @@ def analyze(
             Verdict(
                 "winner_cannot_run",
                 "trap",
-                "%s is the copy Hermes would run, and it cannot run on this Mac: %s."
-                % (pathmodel.tidy(winner.candidate.entry_path), arch_note),
+                (
+                    "%s is the copy the PATH you supplied picks, and it cannot run on this Mac: %s."
+                    % (pathmodel.tidy(winner.candidate.entry_path), arch_note)
+                    if custom
+                    else "%s is the copy Hermes would run, and it cannot run on this Mac: %s."
+                    % (pathmodel.tidy(winner.candidate.entry_path), arch_note)
+                ),
             )
         )
 
@@ -260,17 +296,22 @@ def analyze(
         slot_note = "slot %d" % (winner.candidate.slot + 1)
     before = [f for f in dead_on_path if f.candidate.slot is not None and winner.candidate.slot is not None and f.candidate.slot < winner.candidate.slot]
     if before:
+        if len(before) == 1:
+            what = "one entry for %s is not a usable program" % tool
+            pronoun = "it"
+        else:
+            what = "%d entries for %s are not usable programs" % (len(before), tool)
+            pronoun = "them"
+        text = (
+            "Earlier in the PATH you supplied, %s, so a shell reads past %s." % (what, pronoun)
+            if custom
+            else "Earlier in PATH, %s, so the shell silently skips %s." % (what, pronoun)
+        )
         verdicts.append(
             Verdict(
                 "skipped_dead_entries",
                 "warning",
-                (
-                    "Earlier in PATH, one entry for %s is not a usable program, so the shell "
-                    "silently skips it." % tool
-                    if len(before) == 1
-                    else "Earlier in PATH, %d entries for %s are not usable programs, so the "
-                    "shell silently skips them." % (len(before), tool)
-                ),
+                text,
                 tuple(
                     "%s → %s" % (pathmodel.tidy(f.candidate.entry_path), f.candidate.kind_label)
                     for f in before
@@ -327,9 +368,9 @@ def analyze(
 
     if newer:
         detail = []
-        subject = "Hermes's process PATH picks" if source.kind != pathmodel.CUSTOM_SOURCE else "the name resolves to"
+        subject = "the PATH you supplied resolves to" if custom else "Hermes's process PATH picks"
         for other in newer[:3]:
-            where = "on PATH" if other.candidate.on_path else "outside PATH"
+            where = _location(other.candidate, custom)
             detail.append(
                 "%s — %s, %s, %s"
                 % (
@@ -354,6 +395,16 @@ def analyze(
         )
     elif others:
         distinct = 1 + len(others)
+        # A supplied PATH is a short list; the machine around it is not. Say how
+        # many of the copies this report found were actually in the PATH asked
+        # about, so "8 separate copies" cannot be read as "8 in that PATH".
+        in_this_path = sum(1 for f in [winner] + others if f.candidate.on_path)
+        lede = "%d separate copies of %s are installed" % (distinct, tool)
+        if custom:
+            lede += " — %d in the PATH you supplied, %d elsewhere on this machine" % (
+                in_this_path,
+                distinct - in_this_path,
+            )
         listing = tuple(
             "%s — %s" % (pathmodel.tidy(f.candidate.entry_path), _version_or_unknown(f))
             for f in [winner] + others
@@ -363,18 +414,17 @@ def analyze(
                 Verdict(
                     "multiple_copies",
                     "note",
-                    "%d separate copies of %s are installed. Versions were not checked, so "
-                    "which one is newer is unknown." % (distinct, tool),
+                    lede + ". Versions were not checked, so which one is newer is unknown.",
                     listing,
                 )
             )
-        elif uncomparable or silent or unasked or refused or winner_unknown:
+        elif uncomparable or silent or unasked or refused or winner_unknown or winner.not_run:
             # Only claim what was measured. A copy nobody asked, or one that
             # printed nothing, is not evidence that it matches the winner.
             reasons = []
             if uncomparable:
                 reasons.append("their version numbers cannot be ordered against each other")
-            if winner_unknown:
+            if winner_unknown and not winner.not_run:
                 reasons.append("the winning copy has no version")
             if silent:
                 reasons.append("%d reported no version" % len(silent))
@@ -382,14 +432,19 @@ def analyze(
                 reasons.append(
                     "%d %s not asked for a version" % (len(unasked), "was" if len(unasked) == 1 else "were")
                 )
-            if refused:
-                reasons.append("%d %s not run" % (len(refused), "was" if len(refused) == 1 else "were"))
+            # The winner counts too: the "Not run" line below lists it, so this
+            # sentence must not report one fewer copy than that line does.
+            left_alone = len(refused) + (1 if winner.not_run else 0)
+            if left_alone:
+                reasons.append(
+                    "%d %s not run" % (left_alone, "was" if left_alone == 1 else "were")
+                )
             verdicts.append(
                 Verdict(
                     "multiple_copies",
                     "warning",
-                    "There are %d separate copies of %s, and nothing here establishes that they "
-                    "are the same version: %s." % (distinct, tool, "; ".join(reasons)),
+                    lede + ", and nothing here establishes that they are the same version: %s."
+                    % "; ".join(reasons),
                     listing,
                 )
             )
@@ -398,8 +453,8 @@ def analyze(
                 Verdict(
                     "multiple_copies",
                     "note",
-                    "%d separate copies of %s are installed. The winning copy reports %s, and "
-                    "none of the others is newer." % (distinct, tool, winner.version),
+                    lede + ". The winning copy reports %s, and none of the others is newer."
+                    % winner.version,
                     listing,
                 )
             )
@@ -408,8 +463,7 @@ def analyze(
                 Verdict(
                     "multiple_copies",
                     "note",
-                    "%d separate copies of %s are installed, and every one of them reports "
-                    "%s." % (distinct, tool, winner.version),
+                    lede + ", and every one of them reports %s." % winner.version,
                     listing,
                 )
             )
@@ -425,8 +479,11 @@ def analyze(
             Verdict(
                 "ok_aliases",
                 "note",
-                "%d names on PATH all point at the same file, so there is nothing to shadow."
-                % (len(same_target) + 1),
+                "%d names %s all point at the same file, so there is nothing to shadow."
+                % (
+                    len(same_target) + 1,
+                    "in the PATH you supplied" if custom else "on PATH",
+                ),
                 tuple(pathmodel.tidy(f.candidate.entry_path) for f in same_target),
             )
         )
@@ -435,23 +492,39 @@ def analyze(
     if winner.origin.kind == "hermes_managed":
         user_copies = [f for f in others if f.origin.kind != "hermes_managed"]
         if user_copies:
-            verdicts.append(
-                Verdict(
-                    "hermes_managed_winner",
-                    "note",
+            other = user_copies[0]
+            if custom:
+                text = (
+                    "The PATH you supplied picks Hermes's own copy of %s (%s). A copy of yours "
+                    "at %s is %s."
+                    % (
+                        tool,
+                        winner.origin.label,
+                        pathmodel.tidy(other.candidate.entry_path),
+                        "later in that PATH, so it never runs"
+                        if other.candidate.on_path
+                        else "outside that PATH",
+                    )
+                )
+            else:
+                text = (
                     "Hermes's process PATH picks its own copy of %s (%s). Your copy at %s is "
                     "never used for this name."
-                    % (tool, winner.origin.label, pathmodel.tidy(user_copies[0].candidate.entry_path)),
+                    % (tool, winner.origin.label, pathmodel.tidy(other.candidate.entry_path))
                 )
-            )
+            verdicts.append(Verdict("hermes_managed_winner", "note", text))
         else:
             verdicts.append(
                 Verdict(
                     "hermes_managed_winner",
                     "note",
-                    "Hermes's process PATH picks its own copy of %s (%s), which is the only one "
-                    "installed."
-                    % (tool, winner.origin.label),
+                    (
+                        "The PATH you supplied picks Hermes's own copy of %s (%s), which is the "
+                        "only copy in it." % (tool, winner.origin.label)
+                        if custom
+                        else "Hermes's process PATH picks its own copy of %s (%s), which is the "
+                        "only one installed." % (tool, winner.origin.label)
+                    ),
                 )
             )
 
@@ -589,13 +662,13 @@ def _finish(
     for finding in emitted:
         index += 1
         if finding is winner:
-            use_word = "wins here" if custom else "wins in Hermes's PATH"
+            use_word = "wins in this PATH" if custom else "wins in Hermes's PATH"
         elif not finding.candidate.is_live:
             use_word = "skipped by the shell"
         elif finding.candidate.on_path:
             use_word = "never reached"
         else:
-            use_word = "off PATH entirely"
+            use_word = _location(finding.candidate, custom)
         copies.append(
             _copy_line(
                 index,
@@ -605,7 +678,6 @@ def _finish(
             )
         )
 
-    custom = source.kind == pathmodel.CUSTOM_SOURCE
     lines: list[str] = []
     if winner is not None:
         if custom:
@@ -660,18 +732,28 @@ def _finish(
     not_run = [finding for finding in emitted if finding.not_run]
     if not_run:
         lines.append("")
+        # Name only the PATHs this call actually consulted: a supplied-PATH call
+        # never reads the login shell, so listing it here would be a false claim.
+        trusted = (
+            "Hermes's PATH, your login shell's PATH or a known install directory"
+            if login_shell is not None and login_shell.available
+            else "Hermes's PATH or a known install directory"
+        )
         lines.append(
-            "Not run (%d): a copy is executed only when Hermes's PATH, your login shell's "
-            "PATH or a known install directory put it there. A file you name, a copy found "
-            "only in a PATH you pass in, and a copy behind a relative PATH entry are "
-            "described here and left alone." % len(not_run)
+            "Not run (%d): a copy is executed only when %s put it there. A file you name, a "
+            "copy found only in a PATH you pass in, and a copy behind a relative PATH entry "
+            "are described here and left alone." % (len(not_run), trusted)
         )
 
     if repeated_slots:
         lines.append("")
         lines.append(
-            "PATH lists %d director%s more than once — only the first position counts."
-            % (repeated_slots, "y" if repeated_slots == 1 else "ies")
+            "%s lists %d director%s more than once — only the first position counts."
+            % (
+                "The PATH you supplied" if custom else "PATH",
+                repeated_slots,
+                "y" if repeated_slots == 1 else "ies",
+            )
         )
 
     if login_shell is not None:
@@ -746,6 +828,7 @@ def _finish(
                 winner,
                 [f for f in list(on_path_live) + list(off_path) if f is not winner],
             ),
+            custom=custom,
         ),
         "summary": summary,
         "winner": _finding_dict(winner) if winner else None,
@@ -783,8 +866,17 @@ def _version_sort_key(text: str):
     return parsed.numbers if parsed else ()
 
 
-def _headline(tool: str, primary: Verdict, winner: Finding | None, newer: Sequence[str] = ()) -> str:
+def _headline(
+    tool: str,
+    primary: Verdict,
+    winner: Finding | None,
+    newer: Sequence[str] = (),
+    *,
+    custom: bool = False,
+) -> str:
     if winner is None:
+        if custom:
+            return "%s: nothing usable in the PATH you supplied." % tool
         return "%s: nothing usable on PATH." % tool
     where = pathmodel.tidy(winner.candidate.entry_path)
     version = winner.version or ("version not checked" if winner.not_run else "version unknown")
@@ -803,10 +895,16 @@ def _headline(tool: str, primary: Verdict, winner: Finding | None, newer: Sequen
     if primary.code == "multiple_copies":
         return "%s: %s (%s) wins, with several copies installed." % (tool, where, version)
     if primary.code == "hermes_managed_winner":
+        if custom:
+            return "%s: the PATH you supplied picks Hermes's own copy (%s)." % (tool, where)
         return "%s: Hermes uses its own copy (%s)." % (tool, where)
     if primary.code == "installed_not_on_path":
+        if custom:
+            return "%s: installed, but not in the PATH you supplied." % tool
         return "%s: installed, but not on Hermes's process PATH." % tool
     if primary.code == "not_installed":
+        if custom:
+            return "%s: not on the PATH you supplied." % tool
         return "%s: not installed on Hermes's process PATH." % tool
     return "%s: %s (%s) — no conflicts." % (tool, where, version)
 
@@ -947,7 +1045,7 @@ def scan_summary(reports: Sequence[dict], source: PathSource, login_shell: PathS
         lines.append(login_shell.note)
 
     lines.append("")
-    lines.append(SCAN_SCOPE)
+    lines.append(CUSTOM_SCAN_SCOPE if source.kind == pathmodel.CUSTOM_SOURCE else SCAN_SCOPE)
     return "\n".join(lines).strip() + "\n"
 
 

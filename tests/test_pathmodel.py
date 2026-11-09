@@ -412,9 +412,27 @@ def test_probe_trust_ignores_a_directory_only_a_caller_names(pathmodel, sandbox)
 def test_refusal_names_the_reason(pathmodel, sandbox, monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     trust = pathmodel.probe_trust()
+    # No login shell was read, so the refusal must not name the shell's PATH.
+    assert trust.shell_read is False
 
     pasted = sandbox / "pasted"
-    assert pathmodel.refusal(_town_exe(pasted / "python3", pathmodel), trust) == pathmodel.NOT_RUN_OUTSIDE
+    assert (
+        pathmodel.refusal(_town_exe(pasted / "python3", pathmodel), trust)
+        == pathmodel.NOT_RUN_OUTSIDE_NO_SHELL
+    )
+
+    shell = pathmodel.PathSource(
+        kind=pathmodel.LOGIN_SHELL_SOURCE,
+        label="your login shell (zsh)",
+        entries=("/usr/bin", "/bin"),
+        raw="/usr/bin:/bin",
+    )
+    with_shell = pathmodel.probe_trust(shell=shell)
+    assert with_shell.shell_read is True
+    assert (
+        pathmodel.refusal(_town_exe(pasted / "python3", pathmodel), with_shell)
+        == pathmodel.NOT_RUN_OUTSIDE
+    )
 
     relative_path = _town_exe(sandbox / "relrepo" / "python3", pathmodel).entry_path
     relative = pathmodel.inspect(relative_path, directory="", on_path=True, unstable_entry=True)
