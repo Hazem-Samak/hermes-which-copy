@@ -52,11 +52,12 @@ is that the answer arrives finished and readable, with the paths in it.
 The pasted-PATH report has a `Not run (2)` line: those are the two sandbox copies.
 That is not a failure — the sandbox directories are not on Hermes's own PATH and
 not in a known install directory, so the copies there are described, ordered, and
-left alone. The copies that *do* report a version are the ones the machine put in
-a directory this check trusts on its own: `/usr/bin/python3` (3.9.6), Homebrew's
-3.15.2, Hermes's own 3.14.9, and the uv tool. Say it in one sentence — *"a PATH you
-paste in is read, not run, so a repository can't talk it into executing a file"* —
-and move on.
+left alone. The copies that *do* report a version are trusted copies the sweep had
+budget to ask: `/usr/bin/python3` (3.9.6), Homebrew's 3.15.2, both Hermes tools
+(3.14.7 and 3.14.9) and the `skill-lens` uv environment (3.12.14). The second uv
+copy is trusted too and shows `version not checked`, because a sweep caps how many
+copies it asks. Say it in one sentence — *"a PATH you paste in is read, not run, so
+a repository can't talk it into executing a file"* — and move on.
 
 The report's **last** line is the one to end on: `Separately: Hermes's own process
 PATH resolves python3 to …(3.14.9)`. That is the punchline of the whole demo — the

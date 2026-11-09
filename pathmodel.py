@@ -688,19 +688,25 @@ def candidates_off_path(
 # What this check is allowed to execute
 
 
+#: The PATHs and directories this check may execute a copy from, in the words the
+#: report uses. `_NO_SHELL` is the same list for a call that never read the login
+#: shell, so neither the rule nor a copy's reason can name a directory that call
+#: never consulted. Defined once here because both the refusal reason and the
+#: report's "Not run" line state this rule.
+TRUST_SOURCES = "Hermes's PATH, your login shell's PATH or a known install directory"
+TRUST_SOURCES_NO_SHELL = "Hermes's PATH or a known install directory"
+
 #: Why a copy was described but never run. Each string finishes the sentence
 #: "not run: …" in a report, so it is written for a person, not a log.
 NOT_RUN_NAMED = "this check does not run a file you name"
-NOT_RUN_OUTSIDE = (
-    "it is not in a directory this check runs files from — Hermes's PATH, your "
-    "login shell's PATH, or a known install directory"
-)
+NOT_RUN_OUTSIDE = "it is not in a directory this check runs files from — " + TRUST_SOURCES
 #: The same refusal on a call that never read a login shell (``check_login_shell:
 #: false``, or a supplied ``path``). Naming the shell's PATH there would claim a
 #: directory this call never consulted.
 NOT_RUN_OUTSIDE_NO_SHELL = (
-    "it is not in a directory this check runs files from — Hermes's PATH or a "
-    "known install directory; no login shell was read for this call"
+    "it is not in a directory this check runs files from — "
+    + TRUST_SOURCES_NO_SHELL
+    + "; no login shell was read for this call"
 )
 
 NOT_RUN_RELATIVE = (
@@ -728,8 +734,9 @@ class ProbeTrust:
     """
 
     directories: tuple[str, ...] = ()
-    #: Whether a login shell was actually read for this call. The refusal text
-    #: says which PATHs were consulted, so it has to know.
+    #: Whether a login shell was actually read for this call. Part of the trust
+    #: decision's provenance: the refusal text names the directories consulted, so
+    #: it has to know which of them were.
     shell_read: bool = False
 
     def allows(self, entry_path: str) -> bool:

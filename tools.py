@@ -332,18 +332,20 @@ def which_copy(args: dict = None, **kwargs) -> str:
         report["elapsed_ms"] = int((time.monotonic() - started) * 1000)
         if custom_path:
             report["how_to_read"] = (
-                "Path is the copy the PATH you supplied resolves for this name, read in PATH "
-                "order; 'PATH n of N' is the slot it won, and anything after the winner never "
-                "runs. Copies marked 'not run' were described and left alone, because a PATH in "
-                "a call is not permission to execute what is in it. When Hermes's own PATH can "
-                "be read, the last line states what it resolves for the name."
+                "Path is the copy the PATH you supplied resolves for this name; 'PATH n of N' is "
+                "the slot it won. The copies list starts in that PATH's order: anything after the "
+                "winner in that PATH never runs, and copies found elsewhere on the machine follow, "
+                "each marked 'not in the PATH you supplied'. A copy this check left alone shows "
+                "'version not checked' and appears under 'Not run' with the reason. When Hermes's "
+                "own PATH can be read, the last line states what it resolves for the name."
             )
         else:
             report["how_to_read"] = (
                 "Path is the copy the Hermes process resolves for this name (its os.environ PATH). "
-                "'PATH n of N' is the slot it won. The copies list is in PATH order; anything after "
-                "the winner never runs. Commands run through Hermes's terminal tool use a login shell "
-                "plus directories Hermes adds, so that shell can resolve a different copy."
+                "'PATH n of N' is the slot it won. The copies list starts in PATH order: anything "
+                "after the winner in PATH never runs, and copies found outside PATH are listed "
+                "after those. Commands run through Hermes's terminal tool use a login shell plus "
+                "directories Hermes adds, so that shell can resolve a different copy."
             )
         return json.dumps(report, indent=2, ensure_ascii=False)
     except InvalidToolName as exc:
@@ -654,8 +656,8 @@ def which_copy_scan(args: dict = None, **kwargs) -> str:
             "how_to_read": (
                 "Each line is one tool: the copy the PATH you supplied resolves for that name, and "
                 "the single most useful thing to know about it. A supplied PATH is read, never "
-                "run: copies that exist only in it are described without a version. The last line "
-                "says what the PATH above is, and how to ask about Hermes's own."
+                "run: copies that exist only in it are described without a version. The line above "
+                "the scope note says what the PATH above is, and how to ask about Hermes's own."
                 if custom_path
                 else "Each line is one tool: the copy the Hermes process resolves for that name, and "
                 "the single most useful thing to know about it. Use which_copy on a name for the "

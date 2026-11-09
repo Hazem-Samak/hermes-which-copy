@@ -177,6 +177,7 @@ def test_dead_entry_before_the_winner_is_a_warning(build, verdicts, pathmodel, t
     assert report["verdict"] == "skipped_dead_entries"
     assert report["severity"] == "warning"
     assert "Earlier in the PATH you supplied" in report["summary"]
+    assert "earlier in the PATH you supplied" in report["headline"]
     assert "broken symlink" in report["summary"]
     assert report["winner"]["path_raw"] == str(working)
 
@@ -489,7 +490,46 @@ def test_default_mode_still_names_hermes_process_path(build, verdicts, pathmodel
     assert "wins in Hermes's PATH" in summary
     assert "silently skips it" in summary
     assert "outside PATH" in summary
+    assert "off PATH entirely" in summary
     assert "Hermes's process PATH picks 3.13.1" in summary
+
+
+def test_a_supplied_path_report_never_credits_hermes_for_its_winner(
+    build, verdicts, pathmodel, tmp_path
+):
+    """With a login shell in hand, the disagreement is with the supplied PATH."""
+    inside = build(write_exe(tmp_path / "a" / "python3", version="3.9.2"), version="3.9.2", slot=0)
+    shell_copy = build(
+        write_exe(tmp_path / "b" / "python3", version="3.13.1"), version="3.13.1", slot=0
+    )
+    shell_source = pathmodel.PathSource(
+        kind=pathmodel.LOGIN_SHELL_SOURCE,
+        label="your login shell (zsh)",
+        entries=(str(tmp_path / "b"),),
+        raw=str(tmp_path / "b"),
+    )
+    report = analyse(
+        verdicts,
+        pathmodel,
+        [inside],
+        source=pathmodel.custom_source(str(tmp_path / "a")),
+        shell=shell_source,
+        login_findings=[shell_copy],
+    )
+    assert "the PATH you supplied picks" in report["summary"]
+    assert "Hermes's process PATH picks" not in report["summary"]
+    assert "Hermes's process PATH picks" not in report["headline"]
+
+    # The same comparison against Hermes's own PATH keeps the Hermes wording.
+    default = analyse(
+        verdicts,
+        pathmodel,
+        [build(write_exe(tmp_path / "c" / "python3", version="3.9.2"), version="3.9.2", slot=0)],
+        source=pathmodel.hermes_source(str(tmp_path / "c")),
+        shell=shell_source,
+        login_findings=[shell_copy],
+    )
+    assert "Hermes's process PATH picks" in default["summary"]
 
 
 # --------------------------------------------------------------------------- #
@@ -537,7 +577,7 @@ def test_scan_summary_counts_and_table(build, verdicts, pathmodel, tools, tmp_pa
     text = verdicts.scan_summary(slim, pathmodel.custom_source("/a:/b:/c"), None)
     assert "Checked 3 tools" in text
     assert "1 trap" in text
-    assert "Not installed: codex" in text
+    assert "Not in the PATH you supplied: codex" in text
     # traps are printed before clean tools
     assert text.index("python3") < text.index("git")
     assert "older copy wins" in text
@@ -547,6 +587,43 @@ def test_scan_summary_counts_and_table(build, verdicts, pathmodel, tools, tmp_pa
 def tools_slim(tools, report):
     """The scan handler's own trim, so this test cannot drift from production."""
     return tools._slim(report)
+
+
+def test_scan_summary_in_default_mode_still_says_not_installed(verdicts, pathmodel, tools):
+    report = verdicts.analyze("codex", pathmodel.hermes_source("/nowhere"), [], host="arm64")
+    text = verdicts.scan_summary(
+        [tools_slim(tools, report)], pathmodel.hermes_source("/nowhere"), None
+    )
+    assert "Not installed: codex" in text
+    assert "Not in the PATH you supplied" not in text
+
+
+def test_scan_note_does_not_call_unprobed_versions_the_same(
+    build, verdicts, pathmodel, tools, tmp_path
+):
+    """probe_versions: false must not read as "several copies, same version"."""
+    # With probing off, no copy carries a version — that is the production shape.
+    one = build(write_exe(tmp_path / "a" / "python3"), version=None, slot=0)
+    two = build(write_exe(tmp_path / "b" / "python3"), version=None, slot=1)
+    report = verdicts.analyze(
+        "python3", pathmodel.custom_source("/a:/b"), [one, two], host="arm64", probed=False
+    )
+    text = verdicts.scan_summary(
+        [tools_slim(tools, report)], pathmodel.custom_source("/a:/b"), None
+    )
+    assert "several copies, versions not checked" in text
+    assert "same version" not in text
+
+
+def test_a_supplied_path_count_omits_an_empty_elsewhere_clause(
+    build, verdicts, pathmodel, tmp_path
+):
+    one = build(write_exe(tmp_path / "a" / "python3", version="3.9.2"), version="3.9.2", slot=0)
+    two = build(write_exe(tmp_path / "b" / "python3", version="3.9.2"), version="3.9.2", slot=1)
+    report = analyse(verdicts, pathmodel, [one, two])
+    text = next(item["text"] for item in report["verdicts"] if item["code"] == "multiple_copies")
+    assert "2 in the PATH you supplied" in text
+    assert "elsewhere" not in text
 
 
 def test_scan_summary_notes_terminal_disagreement(build, verdicts, pathmodel, tools, tmp_path):

@@ -464,6 +464,30 @@ def test_scan_can_sweep_a_supplied_path(tools, sandbox):
     assert "the PATH you supplied" in payload["how_to_read"]
 
 
+def test_scan_of_a_supplied_path_does_not_call_off_path_copies_uninstalled(
+    tools, sandbox, monkeypatch
+):
+    """A tool the pasted PATH lacks may still exist on the machine."""
+    elsewhere = write_exe(sandbox / "elsewhere" / "python3", version="3.13.1")
+    empty = sandbox / "empty"
+    empty.mkdir()
+    monkeypatch.setattr(tools.pathmodel, "extra_roots", lambda *a, **k: [str(elsewhere.parent)])
+
+    payload = scan(
+        tools,
+        {
+            "path": str(empty),
+            "tools": ["python3"],
+            "check_login_shell": False,
+            "probe_versions": False,
+        },
+    )
+    assert "Not in the PATH you supplied: python3" in payload["summary"]
+    assert "Not installed: python3" not in payload["summary"]
+    texts = [verdict["text"] for verdict in payload["tools"][0]["verdicts"]]
+    assert any("installed outside the PATH you supplied" in text for text in texts)
+
+
 def test_scan_without_a_path(tools, monkeypatch):
     monkeypatch.setenv("PATH", "")
     payload = scan(tools, {"check_login_shell": False})

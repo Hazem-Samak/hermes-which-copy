@@ -150,13 +150,13 @@ def _copy_line(
     return line
 
 
-def _location(candidate: Candidate, custom: bool) -> str:
+def _location(candidate: Candidate, source: PathSource) -> str:
     """Where a copy was found, in the terms of the PATH this report searched.
 
-    A supplied PATH is not *the* PATH, so "off PATH entirely" would read as a
-    claim about the machine. The phrase names the PATH that was actually read.
+    A supplied PATH is not *the* PATH, so "outside PATH" would read as a claim
+    about the machine. The phrase names the PATH that was actually read.
     """
-    if custom:
+    if source.kind == pathmodel.CUSTOM_SOURCE:
         return "in the PATH you supplied" if candidate.on_path else "not in the PATH you supplied"
     return "on PATH" if candidate.on_path else "outside PATH"
 
@@ -370,7 +370,7 @@ def analyze(
         detail = []
         subject = "the PATH you supplied resolves to" if custom else "Hermes's process PATH picks"
         for other in newer[:3]:
-            where = _location(other.candidate, custom)
+            where = _location(other.candidate, source)
             detail.append(
                 "%s — %s, %s, %s"
                 % (
@@ -401,10 +401,9 @@ def analyze(
         in_this_path = sum(1 for f in [winner] + others if f.candidate.on_path)
         lede = "%d separate copies of %s are installed" % (distinct, tool)
         if custom:
-            lede += " — %d in the PATH you supplied, %d elsewhere on this machine" % (
-                in_this_path,
-                distinct - in_this_path,
-            )
+            lede += " — %d in the PATH you supplied" % in_this_path
+            if distinct > in_this_path:
+                lede += ", %d elsewhere on this machine" % (distinct - in_this_path)
         listing = tuple(
             "%s — %s" % (pathmodel.tidy(f.candidate.entry_path), _version_or_unknown(f))
             for f in [winner] + others
@@ -564,16 +563,26 @@ def analyze(
                         "%s → %s, skipped there too"
                         % (pathmodel.tidy(dead.candidate.entry_path), dead.candidate.kind_label)
                     )
+            # The winner came from whichever PATH this report searched. Crediting
+            # Hermes's PATH for a copy a supplied PATH produced would be false,
+            # even if a caller one day passes a login shell alongside `path`.
+            disagreement = (
+                "Your terminal and the PATH you supplied disagree"
+                if custom
+                else "Your terminal and Hermes disagree"
+            )
+            picks = "the PATH you supplied picks" if custom else "Hermes's process PATH picks"
             verdicts.append(
                 Verdict(
                     "hermes_vs_terminal",
                     "warning" if changed_version else "note",
-                    "Your terminal and Hermes disagree: %s runs %s (%s) in a normal terminal, "
-                    "but Hermes's process PATH picks %s."
+                    "%s: %s runs %s (%s) in a normal terminal, but %s %s."
                     % (
+                        disagreement,
                         login_shell.label.replace("your login shell", "your shell"),
                         pathmodel.tidy(login_winner.candidate.entry_path),
                         _version_or_unknown(login_winner),
+                        picks,
                         pathmodel.tidy(winner.candidate.entry_path),
                     ),
                     tuple(detail),
@@ -664,11 +673,12 @@ def _finish(
         if finding is winner:
             use_word = "wins in this PATH" if custom else "wins in Hermes's PATH"
         elif not finding.candidate.is_live:
-            use_word = "skipped by the shell"
+            # In a supplied PATH no particular shell is known to read it.
+            use_word = "skipped by a shell" if custom else "skipped by the shell"
         elif finding.candidate.on_path:
             use_word = "never reached"
         else:
-            use_word = _location(finding.candidate, custom)
+            use_word = "not in the PATH you supplied" if custom else "off PATH entirely"
         copies.append(
             _copy_line(
                 index,
@@ -734,10 +744,11 @@ def _finish(
         lines.append("")
         # Name only the PATHs this call actually consulted: a supplied-PATH call
         # never reads the login shell, so listing it here would be a false claim.
+        # The same two phrases are what a copy's own not_run reason uses.
         trusted = (
-            "Hermes's PATH, your login shell's PATH or a known install directory"
+            pathmodel.TRUST_SOURCES
             if login_shell is not None and login_shell.available
-            else "Hermes's PATH or a known install directory"
+            else pathmodel.TRUST_SOURCES_NO_SHELL
         )
         lines.append(
             "Not run (%d): a copy is executed only when %s put it there. A file you name, a "
@@ -828,7 +839,7 @@ def _finish(
                 winner,
                 [f for f in list(on_path_live) + list(off_path) if f is not winner],
             ),
-            custom=custom,
+            source=source,
         ),
         "summary": summary,
         "winner": _finding_dict(winner) if winner else None,
@@ -872,8 +883,9 @@ def _headline(
     winner: Finding | None,
     newer: Sequence[str] = (),
     *,
-    custom: bool = False,
+    source: PathSource,
 ) -> str:
+    custom = source.kind == pathmodel.CUSTOM_SOURCE
     if winner is None:
         if custom:
             return "%s: nothing usable in the PATH you supplied." % tool
@@ -887,9 +899,20 @@ def _headline(
     if primary.code == "winner_cannot_run":
         return "%s: %s cannot run on this Mac." % (tool, where)
     if primary.code == "hermes_vs_terminal":
+        if custom:
+            return "%s: the PATH you supplied picks %s (%s); your terminal picks another copy." % (
+                tool,
+                where,
+                version,
+            )
         return "%s: Hermes's process PATH picks %s (%s); your terminal picks another copy." % (tool, where, version)
     if primary.code == "skipped_dead_entries":
-        return "%s: %s (%s) wins, with a dead entry earlier in PATH." % (tool, where, version)
+        return (
+            "%s: %s (%s) wins, with a dead entry earlier in the PATH you supplied."
+            % (tool, where, version)
+            if custom
+            else "%s: %s (%s) wins, with a dead entry earlier in PATH." % (tool, where, version)
+        )
     if primary.code == "version_unknown":
         return "%s: %s wins but reported no version." % (tool, where)
     if primary.code == "multiple_copies":
@@ -1014,9 +1037,11 @@ def scan_summary(reports: Sequence[dict], source: PathSource, login_shell: PathS
     ]
 
     order = {"trap": 0, "warning": 1, "note": 2, "ok": 3}
+    listed = 0
     for report in sorted(reports, key=lambda r: (order.get(r["severity"], 9), r["tool"])):
         if not report.get("winner"):
             continue
+        listed += 1
         winner = report["winner"]
         version = winner.get("version") or "?"
         marker = MARKERS.get(report["severity"], "•")
@@ -1029,8 +1054,12 @@ def scan_summary(reports: Sequence[dict], source: PathSource, login_shell: PathS
     if missing:
         shown = ", ".join(missing[:8])
         more = "" if len(missing) <= 8 else " (and %d more)" % (len(missing) - 8)
-        lines.append("")
-        lines.append("Not installed: %s%s" % (shown, more))
+        if listed:
+            lines.append("")
+        # "Not installed" would be a claim about the machine, which this sweep
+        # did not measure when the caller supplied the PATH.
+        label = "Not in the PATH you supplied" if source.kind == pathmodel.CUSTOM_SOURCE else "Not installed"
+        lines.append("%s: %s%s" % (label, shown, more))
 
     if login_shell is not None and login_shell.available:
         disagree = [report["tool"] for report in reports if _terminal_disagrees(report)]
@@ -1081,7 +1110,7 @@ def _scan_note(report: dict) -> str:
     if "hermes_vs_terminal" in codes:
         return "your terminal picks a different copy"
     if "skipped_dead_entries" in codes:
-        return "a dead PATH entry sits in front of it"
+        return "a dead entry sits in front of it"
     if "version_unknown" in codes:
         return "reported no version"
     if "multiple_copies" in codes:
@@ -1091,6 +1120,8 @@ def _scan_note(report: dict) -> str:
         text = codes["multiple_copies"].get("text", "")
         if "cannot be ordered" in text:
             return "several copies, versions cannot be ordered"
+        if "Versions were not checked" in text:
+            return "several copies, versions not checked"
         if "not run" in text:
             return "several copies, versions not checked"
         if "no version" in text:

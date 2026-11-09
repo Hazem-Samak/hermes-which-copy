@@ -177,8 +177,9 @@ What it shows, in the order to record it:
    other one.
 2. *"Check my whole environment."* → the sweep above.
 3. *"Which copy wins in this PATH? …/bin-2021:…/bin-2025:…/bin-broken:/usr/local/bin:/usr/bin:/bin"*
-   → the copies in that PATH, in slot order, every copy it did not run, and a
-   final line saying what Hermes's own PATH would run:
+   → the copies in that PATH in slot order, then the ones found elsewhere on the
+   machine, every copy it did not run, and a final line saying what Hermes's own
+   PATH would run:
 
 ```text
 python3 — wins in the PATH you supplied: ~/which-copy-demo/bin-2021/python3
@@ -217,11 +218,14 @@ copy wins in that PATH, and that the 2025 copy never gets there — without
 pretending to have measured the other PATHs. And it **does not run the two copies
 the PATH pointed at**: they came from a string in the conversation, and a string
 in the conversation is not the machine. The copies that *do* report a version are
-the ones the machine put somewhere this check trusts on its own — `/usr/bin` is in
-the pasted PATH and on every Mac, while Homebrew's 3.15.2, both Hermes tools and
-the `uv` tool sit in known install directories and would report even if the pasted
-PATH never named them. That distinction is the whole security story: a repository
-that tells an agent *"check this PATH for me"* cannot get its own script executed.
+trusted copies this check had budget to ask — `/usr/bin` is in the pasted PATH and
+on every Mac, while Homebrew's 3.15.2, both Hermes tools and the `skill-lens` uv
+environment sit in known install directories and report even though the pasted
+PATH never named them. (The second uv copy is trusted too and comes back
+`version not checked`: trust is what allows a probe, not a promise of one — a
+sweep also caps how many copies it asks.) That distinction is the whole security
+story: a repository that tells an agent *"check this PATH for me"* cannot get its
+own script executed.
 
 The last two lines reframe it. The scope line says this was the PATH you supplied,
 not the one Hermes runs with and not the one its terminal tool builds, and the
